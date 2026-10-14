@@ -15,8 +15,9 @@ type Entry struct {
 }
 
 type State struct {
-	Files map[string]Entry  `json:"files"`
-	Links map[string]string `json:"links"`
+	Files       map[string]Entry  `json:"files"`
+	Links       map[string]string `json:"links"`
+	Unavailable map[string]string `json:"unavailable,omitempty"`
 }
 
 func loadState(path string) (*State, error) {
@@ -36,6 +37,9 @@ func loadState(path string) (*State, error) {
 	}
 	if st.Links == nil {
 		st.Links = map[string]string{}
+	}
+	if st.Unavailable == nil {
+		st.Unavailable = map[string]string{}
 	}
 	return st, nil
 }

@@ -137,7 +137,7 @@ function renderStats(s) {
   if (active) {
     const pct = p.bytesTotal ? (p.bytesDone / p.bytesTotal) * 100 : 0;
     meter($("progress-bar"), $("progress-fill"), pct);
-    $("progress-phase").textContent = { checking: "Checking files…", uploading: "Uploading…", restoring: "Restoring…" }[p.phase] || "Working…";
+    $("progress-phase").textContent = { checking: "Checking files…", uploading: "Uploading…", downloading: "Downloading from Drive…", restoring: "Restoring…" }[p.phase] || "Working…";
     $("progress-text").textContent = p.filesDone + " / " + p.filesTotal + " files · " + bytes(p.bytesDone) + " / " + bytes(p.bytesTotal);
   }
   const r = s.lastRun;

@@ -217,3 +217,38 @@ func TestCleanStaleParts(t *testing.T) {
 		t.Fatal("user file removed")
 	}
 }
+
+func TestSyncerDownloadAll(t *testing.T) {
+	files := map[string][]byte{"good1": []byte("one"), "good2": []byte("two")}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := filepath.Base(r.URL.Path)
+		if id == "bad" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"code":403,"message":"abusive","errors":[{"reason":"cannotDownloadAbusiveFile"}]}}`))
+			return
+		}
+		w.Write(files[id])
+	}))
+	defer api.Close()
+	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(api.Client()), option.WithEndpoint(api.URL+"/"))
+	sum := func(b []byte) string { s := md5.Sum(b); return hex.EncodeToString(s[:]) }
+	root := t.TempDir()
+	st, _ := loadState(filepath.Join(t.TempDir(), "s.json"))
+	var last Progress
+	s := &Syncer{srv: srv, paths: Paths{Root: root}, st: st, progress: func(p Progress) { last = p }}
+	errs := s.downloadAll(context.Background(), []pendingDownload{
+		{"a.txt", RemoteFile{ID: "good1", MD5: sum(files["good1"]), Size: 3}},
+		{"d/b.txt", RemoteFile{ID: "good2", MD5: sum(files["good2"]), Size: 3}},
+		{"x.bin", RemoteFile{ID: "bad", MD5: "m", Size: 9}},
+	})
+	if len(errs) != 1 || st.Unavailable["x.bin"] != "m" {
+		t.Fatalf("errs %v unavailable %v", errs, st.Unavailable)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "d", "b.txt")); string(b) != "two" || st.Files["a.txt"].MD5 == "" {
+		t.Fatal("good files not downloaded or recorded")
+	}
+	if last.FilesDone != 3 || last.Uploaded != 2 || last.Phase != "downloading" {
+		t.Fatalf("progress %+v", last)
+	}
+}

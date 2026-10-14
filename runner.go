@@ -357,7 +357,8 @@ func (r *Runner) pass(ctx context.Context, ps *passState) error {
 		if lerr != nil {
 			return errors.Join(err, lerr)
 		}
-		ps.sync = &Syncer{srv: ps.srv, paths: r.paths, st: st, force: r.force, notify: r.addRecent, stop: r.isPaused, index: ps.index}
+		ps.sync = &Syncer{srv: ps.srv, paths: r.paths, st: st, force: r.force, notify: r.addRecent, stop: r.isPaused, index: ps.index,
+			progress: func(p Progress) { r.set(func(s *Status) { s.Progress = p }) }}
 	}
 	ps.sync.exclude, ps.sync.limiter, ps.sync.resumer = newExcluder(cfg.Exclude), cfg.limiter(), ps.resumer
 	r.set(func(st *Status) { st.State, st.Message = "syncing", "Syncing "+filepath.Base(r.paths.Root) })

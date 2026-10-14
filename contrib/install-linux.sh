@@ -29,7 +29,6 @@ if [ -f "$bookmarks" ] && ! grep -q "file://$HOME/$folder " "$bookmarks"; then
 	echo "file://$HOME/$folder $label" >>"$bookmarks"
 fi
 gtk-update-icon-cache -q "$data/icons/hicolor" 2>/dev/null || true
-proc=$(printf %.15s "$app")
-pkill -u "$(id -u)" -x "$proc" && sleep 2 || true
+pkill -u "$(id -u)" -f "$bin ui" && sleep 2 || true
 nohup "$bin" ui -no-browser -tray >/dev/null 2>&1 &
 echo "$name installed. Open it from the tray, the app menu, or http://127.0.0.1:$port/"

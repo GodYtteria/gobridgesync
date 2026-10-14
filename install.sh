@@ -56,7 +56,7 @@ fi
 
 bin=$HOME/.local/bin/$app
 mkdir -p "$HOME/.local/bin"
-pkill -x "$(printf %.15s "$app")" 2>/dev/null && sleep 2 || true
+pkill -f "$bin ui" 2>/dev/null && sleep 2 || true
 install -m 755 "$tmp/pkg/$app" "$bin"
 xattr -d com.apple.quarantine "$bin" 2>/dev/null || true
 nohup "$bin" ui -tray >/dev/null 2>&1 &

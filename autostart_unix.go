@@ -15,7 +15,7 @@ func autostartFile() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "autostart", "gobridgesync.desktop"), nil
+	return filepath.Join(dir, "autostart", appID()+".desktop"), nil
 }
 
 func desktopQuote(s string) string {
@@ -38,7 +38,7 @@ func setAutostart(on bool) error {
 	if err != nil {
 		return err
 	}
-	entry := "[Desktop Entry]\nType=Application\nName=GoBridgeSync\nComment=Back up and sync with Google Drive\n" +
+	entry := "[Desktop Entry]\nType=Application\nName=" + releaseName() + "\nComment=Back up and sync with Google Drive\n" +
 		"Exec=" + desktopQuote(exe) + " ui -no-browser -tray\nIcon=gobridgesync\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
 	return writeFileAtomic(file, []byte(entry), 0o644)
 }

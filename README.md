@@ -72,6 +72,17 @@ Use your own free Google OAuth client. One time, about 5 minutes. The app shows 
 - Quitting from the tray asks for confirmation, so backups don't stop by accident.
 - Updates are checked daily. Each release is signed, and GoBridgeSync refuses any update whose signature doesn't match the key built into the app.
 
+## Uninstall
+
+Quit GoBridgeSync from the tray, then run:
+
+```sh
+gobridgesync uninstall          # keep sign-in and settings
+gobridgesync uninstall -purge   # also remove sign-in and settings
+```
+
+On Windows run `%LOCALAPPDATA%\GoBridgeSync\gobridgesync.exe uninstall`. Your files and your Google Drive are never touched.
+
 ## Build from source
 
 ```sh

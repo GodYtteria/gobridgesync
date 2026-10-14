@@ -16,7 +16,7 @@ func setAutostart(on bool) error {
 	if err != nil {
 		return err
 	}
-	file := filepath.Join(home, "Library", "LaunchAgents", "com.gobridgesync.plist")
+	file := filepath.Join(home, "Library", "LaunchAgents", "com."+appID()+".plist")
 	if !on {
 		if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -36,7 +36,7 @@ func setAutostart(on bool) error {
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.gobridgesync</string>
+	<string>com.` + appID() + `</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>` + esc.String() + `</string>

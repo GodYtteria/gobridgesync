@@ -2,25 +2,31 @@
 set -eu
 cd "$(dirname "$0")"
 version=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
+app=gobridgesync
+extra=""
+if [ "${EDITION:-external}" = internal ]; then
+	app=gobridgesync-bukluran
+	extra="-X main.edition=internal -X main.embeddedClient=${GBS_CLIENT:?set GBS_CLIENT} -X main.updateBase=${UPDATE_BASE:-}"
+fi
 targets=${*:-linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 freebsd/amd64}
 rm -rf dist
 mkdir -p dist
 for target in $targets; do
 	os=${target%/*}
 	arch=${target#*/}
-	name=gobridgesync-$os-$arch
+	name=$app-$os-$arch
 	stage=dist/$name
 	rm -rf "$stage"
 	mkdir -p "$stage"
 	ext=""
-	flags="-s -w -X main.version=$version"
+	flags="-s -w -X main.version=$version $extra"
 	if [ "$os" = windows ]; then
 		ext=".exe"
 		flags="$flags -H windowsgui"
 	fi
 	cgo=0
 	[ "$os" = darwin ] && [ "$(uname -s)" = Darwin ] && cgo=1
-	CGO_ENABLED=$cgo GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$flags" -o "$stage/gobridgesync$ext" .
+	CGO_ENABLED=$cgo GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$flags" -o "$stage/$app$ext" .
 	case $os in
 	linux | freebsd)
 		mkdir -p "$stage/assets/icons" "$stage/contrib"

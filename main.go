@@ -21,6 +21,7 @@ commands:
   sync    run one sync pass
   run     sync continuously
   ui      sync continuously with a web interface on localhost
+  uninstall  remove GoBridgeSync (-purge also removes sign-in and settings)
 
 flags:
   -root DIR        local sync folder (default ~/GoogleDrive)
@@ -47,10 +48,11 @@ func main() {
 	root := fs.String("root", paths.Root, "")
 	interval := fs.Duration("interval", time.Minute, "")
 	force := fs.Bool("force", false, "")
-	addr := fs.String("addr", defaultUIAddr, "")
+	addr := fs.String("addr", defaultAddr(), "")
 	noBrowser := fs.Bool("no-browser", false, "")
 	tray := fs.Bool("tray", false, "")
 	full := fs.Bool("full", false, "")
+	purge := fs.Bool("purge", false, "")
 	fs.Parse(os.Args[2:])
 	if paths.Root, err = filepath.Abs(*root); err != nil {
 		log.Fatal(err)
@@ -69,6 +71,8 @@ func main() {
 			log.Fatal("interval must be at least 10s")
 		}
 		err = requireFull(paths, syncLoop(ctx, paths, *force, *interval))
+	case "uninstall":
+		err = uninstall(paths, *purge)
 	case "ui":
 		err = serveUI(ctx, paths, *force, *addr, !*noBrowser, *tray)
 	default:

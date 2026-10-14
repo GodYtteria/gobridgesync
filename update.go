@@ -92,9 +92,9 @@ func newerVersion(latest, current string) bool {
 
 func assetName(goos, goarch string) string {
 	if goos == "windows" {
-		return "gobridgesync-windows-" + goarch + ".zip"
+		return appID() + "-windows-" + goarch + ".zip"
 	}
-	return "gobridgesync-" + goos + "-" + goarch + ".tar.gz"
+	return appID() + "-" + goos + "-" + goarch + ".tar.gz"
 }
 
 func releaseName() string {
@@ -205,7 +205,7 @@ func extractBinary(archive []byte, goos string) ([]byte, error) {
 			return nil, err
 		}
 		for _, f := range zr.File {
-			if f.Name == "gobridgesync.exe" {
+			if f.Name == appID()+".exe" {
 				rc, err := f.Open()
 				if err != nil {
 					return nil, err
@@ -229,7 +229,7 @@ func extractBinary(archive []byte, goos string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if path.Clean(h.Name) == "gobridgesync" && h.Typeflag == tar.TypeReg {
+		if path.Clean(h.Name) == appID() && h.Typeflag == tar.TypeReg {
 			return io.ReadAll(io.LimitReader(tr, maxDownload))
 		}
 	}

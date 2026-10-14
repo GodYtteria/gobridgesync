@@ -40,3 +40,17 @@ func hasClient(p Paths) bool {
 	}
 	return fileExists(p.credentials())
 }
+
+func appID() string {
+	if internalEdition() {
+		return "gobridgesync-bukluran"
+	}
+	return "gobridgesync"
+}
+
+func defaultAddr() string {
+	if internalEdition() {
+		return "127.0.0.1:47812"
+	}
+	return "127.0.0.1:47811"
+}

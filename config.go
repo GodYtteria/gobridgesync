@@ -21,16 +21,16 @@ func defaultPaths() (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	data := filepath.Join(cfg, "gobridgesync", "state")
+	data := filepath.Join(cfg, appID(), "state")
 	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		data = os.Getenv("XDG_DATA_HOME")
 		if data == "" {
 			data = filepath.Join(home, ".local", "share")
 		}
-		data = filepath.Join(data, "gobridgesync")
+		data = filepath.Join(data, appID())
 	}
 	return Paths{
-		ConfigDir: filepath.Join(cfg, "gobridgesync"),
+		ConfigDir: filepath.Join(cfg, appID()),
 		StateDir:  data,
 		Root:      filepath.Join(home, syncFolderName()),
 	}, nil

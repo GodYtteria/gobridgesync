@@ -25,7 +25,6 @@ import (
 )
 
 const (
-	defaultUIAddr  = "127.0.0.1:47811"
 	maxCredentials = 64 << 10
 )
 

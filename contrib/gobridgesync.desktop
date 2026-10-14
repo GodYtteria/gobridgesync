@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GoBridgeSync
+Comment=Sync your Google Drive with a local folder
+Exec=gobridgesync ui
+Icon=gobridgesync
+Terminal=false
+Categories=Utility;FileTools;
+Keywords=drive;sync;backup;cloud;

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="gbs-token" content="{{.Token}}">
+<title>GoBridgeSync</title>
+<link rel="icon" href="/logo.png" type="image/png">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9"/><path d="M18.5 3v4.2h-4.2M5.5 21v-4.2h4.2"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.4-1.2A4.6 4.6 0 0 1 17.5 18.5z"/></symbol>
+  <symbol id="i-computer" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.2v.1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3"/></symbol>
+  <symbol id="i-login" viewBox="0 0 24 24"><path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14M4 12h11M11 8l4 4-4 4"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.1M4.5 12h.1M4.5 18h.1"/></symbol>
+</svg>
+
+<header class="top">
+  <img src="/logo.png" alt="" width="36" height="36">
+  <h1 id="app-name">GoBridgeSync</h1>
+  <span class="pill" aria-hidden="true"><span id="dot" class="dot"></span><span id="pill-text"></span></span>
+</header>
+
+<main>
+  <div id="alert" class="alert" role="alert" hidden>
+    <svg class="icon alert-icon" aria-hidden="true"><use href="#i-alert"/></svg>
+    <div>
+      <strong id="alert-title"></strong>
+      <p id="alert-text"></p>
+      <p id="alert-hint" class="hint"></p>
+    </div>
+  </div>
+
+  <section class="card hero" aria-live="polite">
+    <p id="message" class="message">Loading…</p>
+    <p id="detail" class="muted"></p>
+    <div id="progress-box" class="meter-box" hidden>
+      <div class="meter-label"><span id="progress-phase"></span><span id="progress-text"></span></div>
+      <div class="meter" role="progressbar" aria-label="Backup progress" aria-valuemin="0" aria-valuemax="100" id="progress-bar">
+        <div id="progress-fill" class="fill"></div>
+      </div>
+    </div>
+    <p id="error" class="error" role="alert" hidden></p>
+    <div class="actions">
+      <button id="sync" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sync"/></svg>Sync now</button>
+      <button id="pause" type="button" class="secondary" disabled><svg class="icon" aria-hidden="true"><use id="pause-icon" href="#i-pause"/></svg><span id="pause-label">Pause</span></button>
+      <button id="open" type="button" class="secondary"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Open folder</button>
+      <button id="update" type="button" class="secondary" hidden><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg><span id="update-label">Update</span></button>
+    </div>
+  </section>
+
+  <section id="setup" class="card" hidden>
+    <h2><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>Step 1 · Connect to Google</h2>
+    <p class="muted small">One time only, free, about 5 minutes. Open each step for details.</p>
+    <ol class="steps guide">
+      <li>
+        <details>
+          <summary><a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Create a Google Cloud project</a></summary>
+          <ul>
+            <li>Project name: <code>GoBridgeSync</code>. Leave the project ID and organization as they are.</li>
+            <li>Click <strong>Create</strong>, then make sure <strong>GoBridgeSync</strong> is selected at the top of the page.</li>
+            <li>If you see "Google Cloud access blocked", turn on <a href="https://myaccount.google.com/signinoptions/two-step-verification" target="_blank" rel="noopener">2-Step Verification</a>, sign out, and sign in again.</li>
+            <li>Skip any "free trial" or billing offer. It is not needed.</li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details>
+          <summary><a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">Enable the Google Drive API</a></summary>
+          <ul>
+            <li>Click <strong>Enable</strong>. If you see <strong>Manage</strong> instead, it is already on.</li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details>
+          <summary><a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener">Set up the consent screen</a></summary>
+          <ul>
+            <li>Click <strong>Get started</strong>. App name: <code>GoBridgeSync</code>. Support email: yours.</li>
+            <li>Audience: <strong>External</strong>. Contact email: yours. Accept the policy and click <strong>Create</strong>.</li>
+            <li>Open <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Audience</a> → <strong>Test users</strong> → <strong>Add users</strong> and add the Google account you will sync.</li>
+            <li>Keep the status on <strong>Testing</strong>. Do not publish.</li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details>
+          <summary><a href="https://console.cloud.google.com/auth/clients/create" target="_blank" rel="noopener">Create an OAuth client</a></summary>
+          <ul>
+            <li>Application type: <strong>Desktop app</strong>. Name: <code>GoBridgeSync Desktop</code>.</li>
+            <li>Leave "Use this client for an AI-powered agent" off.</li>
+            <li>Click <strong>Create</strong>, then <strong>Download JSON</strong>. Keep this file private.</li>
+          </ul>
+        </details>
+      </li>
+    </ol>
+    <label class="file">
+      <span>Choose the downloaded JSON file</span>
+      <input id="credentials" type="file" accept="application/json,.json">
+    </label>
+  </section>
+
+  <section id="signin" class="card" hidden>
+    <h2><svg class="icon" aria-hidden="true"><use href="#i-login"/></svg>Step 2 · Sign in</h2>
+    <p class="muted small">Pick the account you added as a test user. When Google says "Google hasn't verified this app", choose <strong>Continue</strong>: it is your own app. You come back here automatically.</p>
+    <button id="login" type="button"><svg class="icon" aria-hidden="true"><use href="#i-login"/></svg>Sign in with Google</button>
+  </section>
+
+  <div class="grid">
+    <section id="overview" class="card" hidden>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>Drive storage</h2>
+      <div class="meter-label"><span id="quota-text">Checking…</span><span id="quota-free"></span></div>
+      <div class="meter" role="progressbar" aria-label="Google Drive storage used" aria-valuemin="0" aria-valuemax="100" id="quota-bar">
+        <div id="quota-fill" class="fill"></div>
+      </div>
+      <h2 class="spaced"><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>Last run</h2>
+      <dl class="stats">
+        <div><dt>Finished</dt><dd id="stat-finished">–</dd></div>
+        <div><dt>Took</dt><dd id="stat-duration">–</dd></div>
+        <div><dt>Uploaded</dt><dd id="stat-uploaded">–</dd></div>
+        <div><dt>Checked</dt><dd id="stat-files">–</dd></div>
+        <div><dt>Size</dt><dd id="stat-bytes">–</dd></div>
+        <div><dt>Problems</dt><dd id="stat-errors">–</dd></div>
+      </dl>
+    </section>
+
+    <section id="settings" class="card" hidden>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-computer"/></svg>Settings</h2>
+
+      <label class="switch">
+        <input id="twoway" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Sync <strong id="root"></strong> across my computers</span>
+      </label>
+
+      <label class="switch">
+        <input id="startup" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Start GoBridgeSync when I sign in</span>
+      </label>
+
+      <label class="switch">
+        <input id="autoupdate" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Install updates automatically</span>
+      </label>
+
+      <h3>Sync</h3>
+      <label class="select">
+        <span class="sr-only">How often to back up and sync</span>
+        <select id="every">
+          <option value="-2">Instantly, when files change</option>
+          <option value="1">Automatically, every minute</option>
+          <option value="5">Automatically, every 5 minutes</option>
+          <option value="15">Automatically, every 15 minutes</option>
+          <option value="60">Automatically, every hour</option>
+          <option value="-1">Manually, only when I click Sync now</option>
+        </select>
+      </label>
+
+      <h3>Back up these folders</h3>
+      <p class="muted small">To <strong id="target"></strong>. Deleting on this computer keeps the Drive copy.</p>
+      <ul id="folders" class="folders"></ul>
+      <form id="add-form" class="row">
+        <label for="add-folder" class="sr-only">Folder to back up</label>
+        <input id="add-folder" type="text" placeholder="~/Downloads" autocomplete="off">
+        <button id="browse" type="button" class="secondary" aria-label="Browse for a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
+        <button type="submit" aria-label="Add folder"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      </form>
+
+      <h3>Skip these</h3>
+      <p class="muted small">Names like <code>*.tmp</code> or <code>node_modules</code>, or a folder like <code>~/Documents/SD-Backup</code>.</p>
+      <ul id="excludes" class="folders"></ul>
+      <form id="exclude-form" class="row">
+        <label for="exclude-input" class="sr-only">Pattern or folder to skip</label>
+        <input id="exclude-input" type="text" placeholder="*.tmp" autocomplete="off">
+        <button id="exclude-browse" type="button" class="secondary" aria-label="Browse for a folder to skip"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
+        <button type="submit" aria-label="Add to skip list"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      </form>
+
+      <h3>Speed limit</h3>
+      <fieldset class="segmented" id="speed">
+        <legend class="sr-only">Limit upload and download speed</legend>
+        <label><input type="radio" name="speed" value="0"><span>Unlimited</span></label>
+        <label><input type="radio" name="speed" value="10240"><span>10 MB/s</span></label>
+        <label><input type="radio" name="speed" value="5120"><span>5 MB/s</span></label>
+        <label><input type="radio" name="speed" value="1024"><span>1 MB/s</span></label>
+        <label><input type="radio" name="speed" value="512"><span>512 KB/s</span></label>
+      </fieldset>
+
+      <h3>Storage limit</h3>
+      <fieldset class="segmented">
+        <legend class="sr-only">Use up to this much of my Google Drive storage</legend>
+        <label><input type="radio" name="limit" value="100"><span>All</span></label>
+        <label><input type="radio" name="limit" value="90"><span>90%</span></label>
+        <label><input type="radio" name="limit" value="75"><span>75%</span></label>
+        <label><input type="radio" name="limit" value="50"><span>50%</span></label>
+      </fieldset>
+    </section>
+  </div>
+
+  <section id="restore-card" class="card" hidden>
+    <div class="card-head">
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-restore"/></svg>Restore</h2>
+      <button id="restore-open" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Browse backups</button>
+    </div>
+    <p class="muted small">Get files or older versions back from Google Drive. Restored files never overwrite what you have; copies are named "(restored)".</p>
+  </section>
+
+  <section id="issues-card" class="card" hidden>
+    <div class="card-head">
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>Problems</h2>
+      <button id="clear-issues" type="button" class="secondary small-btn">Clear</button>
+    </div>
+    <ul id="issues" class="log issues"></ul>
+  </section>
+
+  <section class="card">
+    <h2><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Activity</h2>
+    <ul id="recent" class="log"></ul>
+  </section>
+</main>
+
+<footer><span id="footer-name">GoBridgeSync</span> <span id="version"></span> · Developed by GodYtteria × Bukluran ng Kalinga</footer>
+
+<dialog id="restore" aria-labelledby="restore-title">
+  <h2 id="restore-title"><svg class="icon" aria-hidden="true"><use href="#i-restore"/></svg>Restore from Google Drive</h2>
+  <label class="field">
+    <span>Restore to</span>
+    <input id="restore-dest" type="text" autocomplete="off" value="~/GoBridgeSync Restore">
+  </label>
+  <div class="row crumbs">
+    <button id="restore-up" type="button" class="secondary" aria-label="Go to parent folder"><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg></button>
+    <span id="restore-path" class="crumb"></span>
+    <button id="restore-here" type="button" class="small-btn"><svg class="icon" aria-hidden="true"><use href="#i-restore"/></svg>Restore this folder</button>
+  </div>
+  <p id="restore-error" class="error" role="alert" hidden></p>
+  <ul id="restore-list" class="picker-list remote-list"></ul>
+  <div class="actions">
+    <button id="restore-close" type="button" class="secondary">Close</button>
+  </div>
+</dialog>
+
+<dialog id="picker" aria-labelledby="picker-title">
+  <h2 id="picker-title"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Choose a folder</h2>
+  <div class="row">
+    <button id="picker-up" type="button" class="secondary" aria-label="Go to parent folder"><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg></button>
+    <input id="picker-path" type="text" aria-label="Current folder" autocomplete="off">
+    <button id="picker-go" type="button" class="secondary">Go</button>
+  </div>
+  <p id="picker-error" class="error" role="alert" hidden></p>
+  <ul id="picker-list" class="picker-list"></ul>
+  <div class="actions">
+    <button id="picker-select" type="button"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Select this folder</button>
+    <button id="picker-cancel" type="button" class="secondary">Cancel</button>
+  </div>
+</dialog>
+</body>
+</html>

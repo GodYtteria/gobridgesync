@@ -36,12 +36,12 @@ func removeShortcuts() []error {
 	}
 	exec.Command("gtk-update-icon-cache", "-q", filepath.Join(data, "icons", "hicolor")).Run()
 	if cfg, err := os.UserConfigDir(); err == nil {
-		errs = append(errs, removeBookmark(filepath.Join(cfg, "gtk-3.0", "bookmarks")))
+		errs = append(errs, removeBookmark(filepath.Join(cfg, "gtk-3.0", "bookmarks"), defaultPathsRoot()))
 	}
 	return errs
 }
 
-func removeBookmark(file string) error {
+func removeBookmark(file, root string) error {
 	b, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -51,7 +51,7 @@ func removeBookmark(file string) error {
 	}
 	var keep []string
 	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
-		if !strings.HasSuffix(line, " "+filepath.Base(defaultPathsRoot())) {
+		if !strings.HasPrefix(line, "file://"+root+" ") {
 			keep = append(keep, line)
 		}
 	}

@@ -63,7 +63,7 @@ func main() {
 
 	switch cmd {
 	case "login":
-		err = login(ctx, paths, *full, "")
+		err = login(ctx, paths, *full, "", nil)
 	case "sync":
 		err = requireFull(paths, syncLoop(ctx, paths, *force, 0))
 	case "run":

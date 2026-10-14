@@ -9,14 +9,14 @@ if [ "${EDITION:-external}" = internal ]; then
 	extra="-X main.edition=internal -X main.embeddedClient=${GBS_CLIENT:?set GBS_CLIENT} -X main.updateBase=${UPDATE_BASE:-}"
 fi
 targets=${*:-linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 freebsd/amd64}
-rm -rf dist
+rm -f dist/checksums.txt
 mkdir -p dist
 for target in $targets; do
 	os=${target%/*}
 	arch=${target#*/}
 	name=$app-$os-$arch
 	stage=dist/$name
-	rm -rf "$stage"
+	rm -rf "$stage" "dist/$name.tar.gz" "dist/$name.zip"
 	mkdir -p "$stage"
 	ext=""
 	flags="-s -w -X main.version=$version $extra"

@@ -16,7 +16,7 @@ func removeShortcuts() []error {
 	if appData == "" {
 		return nil
 	}
-	link := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "GoBridgeSync.lnk")
+	link := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", releaseName()+".lnk")
 	if err := os.Remove(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return []error{err}
 	}

@@ -27,6 +27,11 @@ jobs:
       - run: ./build.sh ${{ matrix.targets }}
         env:
           VERSION: ${{ github.ref_name }}
+      - run: ./build.sh ${{ matrix.targets }}
+        env:
+          VERSION: ${{ github.ref_name }}
+          EDITION: internal
+          GBS_CLIENT: ${{ secrets.GBS_BUKLURAN_CLIENT }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.runner }}

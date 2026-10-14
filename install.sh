@@ -33,7 +33,9 @@ else
 	sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 fi
 
-name=gobridgesync-$os-$arch.tar.gz
+app=gobridgesync
+[ "${GBS_EDITION:-}" = bukluran ] && app=gobridgesync-bukluran
+name=$app-$os-$arch.tar.gz
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -52,10 +54,10 @@ if [ "$os" = linux ]; then
 	exit 0
 fi
 
-bin=$HOME/.local/bin/gobridgesync
+bin=$HOME/.local/bin/$app
 mkdir -p "$HOME/.local/bin"
-pkill -x gobridgesync 2>/dev/null && sleep 2 || true
-install -m 755 "$tmp/pkg/gobridgesync" "$bin"
+pkill -x "$(printf %.15s "$app")" 2>/dev/null && sleep 2 || true
+install -m 755 "$tmp/pkg/$app" "$bin"
 xattr -d com.apple.quarantine "$bin" 2>/dev/null || true
 nohup "$bin" ui -tray >/dev/null 2>&1 &
-echo "GoBridgeSync installed. Open it from the menu bar or http://127.0.0.1:47811/"
+echo "Installed. Open it from the menu bar or the address it shows."

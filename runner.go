@@ -49,6 +49,7 @@ type Status struct {
 	OS             string                `json:"os"`
 	Update         string                `json:"updateAvailable"`
 	Updating       bool                  `json:"updating"`
+	LoginURL       string                `json:"loginUrl"`
 	Target         string                `json:"target"`
 	Progress       Progress              `json:"progress"`
 	Quota          *Quota                `json:"quota"`
@@ -283,9 +284,12 @@ func (r *Runner) Login(ctx context.Context, returnURL string) error {
 	r.loggingIn = true
 	r.mu.Unlock()
 	go func() {
-		err := login(ctx, r.paths, false, returnURL)
+		err := login(ctx, r.paths, false, returnURL, func(u string) {
+			r.set(func(s *Status) { s.LoginURL = u })
+		})
 		r.mu.Lock()
 		r.loggingIn = false
+		r.status.LoginURL = ""
 		r.mu.Unlock()
 		if err != nil {
 			r.set(func(s *Status) { s.LastError = "sign-in: " + err.Error() })

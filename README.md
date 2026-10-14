@@ -31,6 +31,16 @@ curl -fsSL https://raw.githubusercontent.com/GodYtteria/gobridgesync/main/instal
 irm https://raw.githubusercontent.com/GodYtteria/gobridgesync/main/install.ps1 | iex
 ```
 
+**Bukluran ng Kalinga staff** install the Bukluran edition instead. It syncs your whole Google Drive and signs in with your `@bukluran.com` account, with no setup:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/GodYtteria/gobridgesync/main/install.sh | GBS_EDITION=bukluran sh
+```
+
+```powershell
+$env:GBS_EDITION='bukluran'; irm https://raw.githubusercontent.com/GodYtteria/gobridgesync/main/install.ps1 | iex
+```
+
 GoBridgeSync shows a tray icon and opens at <http://127.0.0.1:47811/>. Downloads are checked against the release SHA-256 checksums.
 
 Works on any Linux distribution (x86-64 and ARM64). The tray icon appears on KDE, Ubuntu, Cinnamon, and XFCE; on plain GNOME install the AppIndicator extension. Without a tray, use the app menu or the web address.

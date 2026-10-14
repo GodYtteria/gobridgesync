@@ -178,6 +178,10 @@ function render(s) {
   $("setup").hidden = s.hasCredentials;
   $("signin").hidden = !s.hasCredentials || s.loggedIn;
   $("login").disabled = s.state === "login";
+  $("login-fallback").hidden = !s.loginUrl;
+  if (s.loginUrl && s.loginUrl.startsWith("https://accounts.google.com/")) {
+    $("login-link").href = s.loginUrl;
+  }
   const ready = s.hasCredentials && s.loggedIn;
   $("sync").disabled = !ready || s.paused || s.state === "syncing";
   $("pause").disabled = !ready;

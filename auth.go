@@ -42,7 +42,7 @@ func fullAccess(p Paths) bool {
 	return err == nil && string(b) == drive.DriveScope
 }
 
-func login(ctx context.Context, p Paths, full bool, returnURL string) error {
+func login(ctx context.Context, p Paths, full bool, returnURL string, onURL func(string)) error {
 	cfg, err := oauthConfig(p, loginScope(full))
 	if err != nil {
 		return err
@@ -109,6 +109,9 @@ func login(ctx context.Context, p Paths, full bool, returnURL string) error {
 	defer srv.Close()
 
 	fmt.Println("Open this URL to log in:\n" + url)
+	if onURL != nil {
+		onURL(url)
+	}
 	_ = openBrowser(url)
 
 	var code string

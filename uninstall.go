@@ -30,7 +30,7 @@ func uninstall(p Paths, purge bool) error {
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
-	fmt.Println("GoBridgeSync is uninstalled.")
+	fmt.Println(releaseName() + " is uninstalled.")
 	if purge {
 		fmt.Println("Sign-in and settings were removed.")
 	} else {

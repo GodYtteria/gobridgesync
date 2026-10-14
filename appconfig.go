@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type AppConfig struct {
@@ -20,6 +22,30 @@ type AppConfig struct {
 	Updates *bool    `json:"autoUpdate,omitempty"`
 	Exclude []string `json:"exclude"`
 	Speed   int      `json:"speedLimitKB"`
+	Version int      `json:"configVersion"`
+}
+
+const configVersion = 1
+
+var formerBuiltInSkips = []string{".git", "node_modules", ".cache", "__pycache__", ".venv", ".Trash"}
+
+func (c AppConfig) migrate() (AppConfig, bool) {
+	if c.Version >= configVersion {
+		return c, false
+	}
+	if len(c.Folders) > 0 {
+		seen := map[string]bool{}
+		for _, e := range c.Exclude {
+			seen[e] = true
+		}
+		for _, s := range formerBuiltInSkips {
+			if !seen[s] {
+				c.Exclude = append(c.Exclude, s)
+			}
+		}
+	}
+	c.Version = configVersion
+	return c, true
 }
 
 var speedLimits = map[int]bool{0: true, 512: true, 1024: true, 5120: true, 10240: true}
@@ -78,26 +104,42 @@ func loadAppConfig(p Paths) (AppConfig, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return AppConfig{}, err
 	}
-	return c, nil
+	migrated, _ := c.migrate()
+	return migrated, nil
 }
 
 func defaultAppConfig() AppConfig {
-	c := AppConfig{Folders: []string{}, TwoWay: true}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return c
-	}
-	for _, name := range []string{"Documents", "Pictures", "Desktop", "Videos", "Music"} {
-		dir := filepath.Join(home, name)
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			c.Folders = append(c.Folders, dir)
-		}
-	}
-	return c
+	return AppConfig{Folders: []string{}, TwoWay: true, Version: configVersion}
 }
 
+var suggestedFolders = []string{"Documents", "Pictures", "Desktop", "Videos", "Music", "Downloads"}
+
+func folderSuggestions(home string, chosen []string, syncRoot string) []string {
+	out := []string{}
+	for _, name := range suggestedFolders {
+		dir := filepath.Join(home, name)
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() || within(dir, syncRoot) || within(syncRoot, dir) {
+			continue
+		}
+		overlaps := false
+		for _, c := range chosen {
+			if within(dir, c) || within(c, dir) {
+				overlaps = true
+				break
+			}
+		}
+		if !overlaps {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+func (c AppConfig) encode() ([]byte, error) { return json.MarshalIndent(c, "", "  ") }
+
 func (c AppConfig) save(p Paths) error {
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := c.encode()
 	if err != nil {
 		return err
 	}
@@ -120,7 +162,33 @@ func within(child, parent string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func normalizeFolders(in []string, syncRoot string) ([]string, error) {
+var configMu sync.Mutex
+
+func editConfig(p Paths, f func(*AppConfig) error) (AppConfig, error) {
+	configMu.Lock()
+	defer configMu.Unlock()
+	cfg, err := loadAppConfig(p)
+	if err != nil {
+		return cfg, err
+	}
+	if err := f(&cfg); err != nil {
+		return cfg, err
+	}
+	next, err := cfg.encode()
+	if err != nil {
+		return cfg, err
+	}
+	if cur, err := os.ReadFile(p.appConfig()); err == nil && bytes.Equal(cur, next) {
+		return cfg, nil
+	}
+	return cfg, writeFileAtomic(p.appConfig(), next, 0o600)
+}
+
+func normalizeFolders(in []string, syncRoot string, known []string) ([]string, error) {
+	existing := map[string]bool{}
+	for _, k := range known {
+		existing[filepath.Clean(k)] = true
+	}
 	out := []string{}
 	for _, raw := range in {
 		dir, err := expandHome(strings.TrimSpace(raw))
@@ -131,9 +199,11 @@ func normalizeFolders(in []string, syncRoot string) ([]string, error) {
 			return nil, fmt.Errorf("%q: use a full path like ~/Documents", raw)
 		}
 		dir = filepath.Clean(dir)
-		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("%q: folder not found", raw)
+		if !existing[dir] {
+			info, err := os.Stat(dir)
+			if err != nil || !info.IsDir() {
+				return nil, fmt.Errorf("%q: folder not found", raw)
+			}
 		}
 		if within(dir, syncRoot) || within(syncRoot, dir) {
 			return nil, fmt.Errorf("%q: overlaps the two-way sync folder %s", raw, syncRoot)

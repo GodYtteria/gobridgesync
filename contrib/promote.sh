@@ -12,6 +12,5 @@ git -C "$work" rm -rqf . >/dev/null
 git archive "$tag" | tar -x -C "$work"
 git -C "$work" add -A
 git -C "$work" commit -qm "Release $tag"
-git -C "$work" tag "$tag"
-git -C "$work" push -q "$prod" HEAD:main "refs/tags/$tag"
+git -C "$work" push -q "$prod" HEAD:main "HEAD:refs/tags/$tag"
 echo "Promoted $tag to $prod"

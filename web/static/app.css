@@ -150,3 +150,11 @@ footer { max-width: 920px; margin: 0 auto; padding: 4px 16px 28px; color: var(--
 .remote-list .versions { flex-basis: 100%; list-style: none; margin: 0 0 8px 36px; padding: 0; }
 .remote-list .versions li { border: 0; padding: 2px 0; font-size: 0.85rem; }
 .small code, .folders code { background: var(--soft); padding: 1px 5px; border-radius: 5px; }
+.account { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.account .small { margin: 0; }
+.suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.suggest .small { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { padding: 4px 10px; font-size: 0.85rem; border-radius: 999px; }
+.folders .meta { color: var(--muted); font-size: 0.8rem; }
+button.busy { animation: pulse 1s ease-in-out infinite; }

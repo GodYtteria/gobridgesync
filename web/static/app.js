@@ -24,6 +24,29 @@ async function post(path, body) {
   return data;
 }
 
+const osText = {
+  windows: { sep: "\\", startup: "Start GoBridgeSync when Windows starts", folder: "~\\Downloads", restore: "~\\GoBridgeSync Restore", files: "File Explorer" },
+  darwin: { sep: "/", startup: "Open GoBridgeSync at login", folder: "~/Downloads", restore: "~/GoBridgeSync Restore", files: "Finder" },
+  linux: { sep: "/", startup: "Start GoBridgeSync when I sign in", folder: "~/Downloads", restore: "~/GoBridgeSync Restore", files: "Files" },
+};
+let osApplied = "";
+
+function applyOS(os) {
+  if (os === osApplied) {
+    return;
+  }
+  osApplied = os;
+  const t = osText[os] || osText.linux;
+  document.documentElement.dataset.os = os;
+  $("startup-label").textContent = t.startup;
+  $("add-folder").placeholder = t.folder;
+  $("exclude-input").placeholder = "*.tmp or a folder";
+  if ($("restore-dest").value === osText.linux.restore || $("restore-dest").value === osText.windows.restore) {
+    $("restore-dest").value = t.restore;
+  }
+  $("open").title = "Open in " + t.files;
+}
+
 function short(p) {
   const home = current && current.home;
   return home && (p === home || p.startsWith(home + "/") || p.startsWith(home + "\\")) ? "~" + p.slice(home.length) : p;
@@ -143,6 +166,7 @@ function showError(msg) {
 
 function render(s) {
   current = s;
+  applyOS(s.os);
   $("dot").className = "dot " + s.state;
   $("message").textContent = s.message || s.state;
   const parts = ["Folder: " + short(s.root)];
@@ -189,6 +213,13 @@ function render(s) {
     const li = document.createElement("li");
     const name = document.createElement("span");
     name.textContent = short(f);
+    const sz = (s.folderSizes || {})[f];
+    if (sz) {
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = " · " + sz.files.toLocaleString() + " files · " + bytes(sz.bytes);
+      name.append(meta);
+    }
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "secondary";
@@ -204,9 +235,21 @@ function render(s) {
   }));
   if (!(s.folders || []).length) {
     const li = document.createElement("li");
-    li.textContent = "No folders selected";
+    li.textContent = "No folders yet. Pick a suggestion or add your own.";
     folders.append(li);
   }
+  const suggestions = s.suggestions || [];
+  $("suggest").hidden = !suggestions.length;
+  $("suggest-list").replaceChildren(...suggestions.map((dir) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "secondary";
+    b.setAttribute("aria-label", "Back up " + short(dir));
+    b.append(icon("plus"), document.createTextNode(dir.split(/[\\/]/).pop()));
+    b.disabled = measuring;
+    b.addEventListener("click", () => addFolder(dir));
+    return b;
+  }));
   const excludes = $("excludes");
   excludes.replaceChildren(...(s.exclude || []).map((p) => {
     const li = document.createElement("li");
@@ -252,6 +295,40 @@ async function act(path, body) {
   }
 }
 
+let measuring = false;
+
+async function addFolder(dir) {
+  const add = document.querySelector('#add-form button[type="submit"]');
+  measuring = true;
+  add.disabled = true;
+  document.querySelectorAll("#suggest-list button").forEach((c) => { c.disabled = true; });
+  $("add-folder").disabled = true;
+  showError("");
+  add.setAttribute("aria-label", "Measuring " + short(dir));
+  add.classList.add("busy");
+  try {
+    const m = await call("/api/measure", { path: dir });
+    const size = m.files.toLocaleString() + " files, " + bytes(m.bytes);
+    if (m.known && !m.fits) {
+      if (!window.confirm(short(dir) + " is " + size + ", but only " + bytes(m.free) + " of your Drive storage is free (before files still waiting from other folders).\n\nAdd it anyway? Files that don't fit won't be uploaded.")) {
+        return false;
+      }
+    }
+    await saveSettings({ folders: [...(current.folders || []), dir] });
+    return true;
+  } catch (e) {
+    showError(e.message);
+    return false;
+  } finally {
+    measuring = false;
+    add.disabled = false;
+    document.querySelectorAll("#suggest-list button").forEach((c) => { c.disabled = false; });
+    $("add-folder").disabled = false;
+    add.setAttribute("aria-label", "Add folder");
+    add.classList.remove("busy");
+  }
+}
+
 function saveSettings(changes) {
   return act("/api/settings", JSON.stringify(changes));
 }
@@ -268,8 +345,7 @@ $("add-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const value = $("add-folder").value.trim();
   if (value && current) {
-    await saveSettings({ folders: [...(current.folders || []), value] });
-    if ($("error").hidden) {
+    if (await addFolder(value)) {
       $("add-folder").value = "";
     }
   }
@@ -352,6 +428,11 @@ document.querySelectorAll('input[name="speed"]').forEach((el) => {
   el.addEventListener("change", () => saveSettings({ speedLimitKB: Number(el.value) }));
 });
 $("startup").addEventListener("change", (e) => saveSettings({ startAtLogin: e.target.checked }));
+$("signout").addEventListener("click", () => {
+  if (window.confirm("Sign out of Google Drive? Backup and sync stop until you sign in again. Your files stay on this computer and in Drive.\n\nIf you will sign in with a different account, move the files out of " + short(current.root) + " first, or they will be uploaded to the new account.")) {
+    act("/api/signout");
+  }
+});
 $("autoupdate").addEventListener("change", (e) => saveSettings({ autoUpdate: e.target.checked }));
 $("update").addEventListener("click", () => act("/api/update"));
 $("every").addEventListener("change", (e) => saveSettings({ intervalMinutes: Number(e.target.value) }));

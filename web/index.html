@@ -154,7 +154,7 @@
       <label class="switch">
         <input id="startup" type="checkbox" role="switch">
         <span class="track" aria-hidden="true"></span>
-        <span>Start GoBridgeSync when I sign in</span>
+        <span id="startup-label">Start GoBridgeSync when I sign in</span>
       </label>
 
       <label class="switch">
@@ -162,6 +162,11 @@
         <span class="track" aria-hidden="true"></span>
         <span>Install updates automatically</span>
       </label>
+
+      <div class="account">
+        <span class="muted small">Signed in to Google Drive</span>
+        <button id="signout" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-login"/></svg>Sign out</button>
+      </div>
 
       <h3>Sync</h3>
       <label class="select">
@@ -179,6 +184,10 @@
       <h3>Back up these folders</h3>
       <p class="muted small">To <strong id="target"></strong>. Deleting on this computer keeps the Drive copy.</p>
       <ul id="folders" class="folders"></ul>
+      <div id="suggest" class="suggest" hidden>
+        <span class="muted small">Suggested:</span>
+        <span id="suggest-list" class="chips"></span>
+      </div>
       <form id="add-form" class="row">
         <label for="add-folder" class="sr-only">Folder to back up</label>
         <input id="add-folder" type="text" placeholder="~/Downloads" autocomplete="off">
@@ -186,12 +195,12 @@
         <button type="submit" aria-label="Add folder"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
       </form>
 
-      <h3>Skip these</h3>
-      <p class="muted small">Names like <code>*.tmp</code> or <code>node_modules</code>, or a folder like <code>~/Documents/SD-Backup</code>.</p>
+      <h3>Don't back up</h3>
+      <p class="muted small">Files or folders to leave out of backup and sync. Pick a folder with the search button, or type a name: <code>*.tmp</code> skips every .tmp file.</p>
       <ul id="excludes" class="folders"></ul>
       <form id="exclude-form" class="row">
         <label for="exclude-input" class="sr-only">Pattern or folder to skip</label>
-        <input id="exclude-input" type="text" placeholder="*.tmp" autocomplete="off">
+        <input id="exclude-input" type="text" placeholder="*.tmp or a folder" autocomplete="off">
         <button id="exclude-browse" type="button" class="secondary" aria-label="Browse for a folder to skip"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
         <button type="submit" aria-label="Add to skip list"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
       </form>

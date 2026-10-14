@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,11 +102,11 @@ func TestNormalizeFolders(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := normalizeFolders([]string{a + "/"}, sync); err != nil || len(got) != 1 || got[0] != a {
+	if got, err := normalizeFolders([]string{a + "/"}, sync, nil); err != nil || len(got) != 1 || got[0] != a {
 		t.Fatalf("got %v %v", got, err)
 	}
 	for _, bad := range [][]string{{"relative"}, {root + "/missing"}, {a, sub}, {sync}, {root}} {
-		if _, err := normalizeFolders(bad, sync); err == nil {
+		if _, err := normalizeFolders(bad, sync, nil); err == nil {
 			t.Errorf("%v: expected error", bad)
 		}
 	}
@@ -119,11 +120,14 @@ func TestScanTreeSkips(t *testing.T) {
 		os.WriteFile(p, []byte("x"), 0o644)
 	}
 	got, dirs, errs := scanTree(root, nil)
-	if len(errs) != 0 || len(got) != 2 || len(dirs) != 1 || dirs[0] != "dir" {
+	if len(errs) != 0 || len(got) != 4 || len(dirs) != 3 {
 		t.Fatalf("got %v dirs %v errs %v", got, dirs, errs)
 	}
 	if _, ok := got["dir/b.gdoc"]; !ok {
 		t.Fatal("real .gdoc file should be backed up")
+	}
+	if _, ok := got["node_modules/x.js"]; !ok {
+		t.Fatal("chosen folders are backed up in full; nothing is skipped automatically")
 	}
 }
 
@@ -340,5 +344,103 @@ func TestDefaultConfig(t *testing.T) {
 	c := defaultAppConfig()
 	if !c.TwoWay || c.limit() != 90 || c.every() != 5 || !c.startAtLogin() || c.Paused {
 		t.Fatalf("defaults %+v", c)
+	}
+}
+
+func TestFolderSuggestions(t *testing.T) {
+	home := t.TempDir()
+	for _, d := range []string{"Documents", "Pictures", "Music"} {
+		os.Mkdir(filepath.Join(home, d), 0o755)
+	}
+	got := folderSuggestions(home, []string{filepath.Join(home, "Pictures")}, filepath.Join(home, "GoBridgeSync"))
+	if len(got) != 2 || filepath.Base(got[0]) != "Documents" || filepath.Base(got[1]) != "Music" {
+		t.Fatalf("got %v", got)
+	}
+	if c := defaultAppConfig(); len(c.Folders) != 0 {
+		t.Fatalf("new installs should not preselect folders: %v", c.Folders)
+	}
+}
+
+func TestConfigMigration(t *testing.T) {
+	old := AppConfig{Folders: []string{"/x"}, Exclude: []string{"*.tmp", ".git"}}
+	got, changed := old.migrate()
+	if !changed || got.Version != configVersion || len(got.Exclude) != 1+len(formerBuiltInSkips) {
+		t.Fatalf("got %+v", got)
+	}
+	if _, again := got.migrate(); again {
+		t.Fatal("migration ran twice")
+	}
+	if fresh, changed := (AppConfig{}).migrate(); !changed || len(fresh.Exclude) != 0 {
+		t.Fatalf("no folders, nothing to keep: %+v", fresh)
+	}
+}
+
+func TestMeasure(t *testing.T) {
+	p := Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a"), make([]byte, 100), 0o644)
+	os.WriteFile(filepath.Join(dir, "b"), make([]byte, 50), 0o644)
+	r := newRunner(p, false)
+	m, err := r.Measure(dir)
+	if err != nil || m.Files != 2 || m.Bytes != 150 || m.Known || !m.Fits {
+		t.Fatalf("got %+v %v", m, err)
+	}
+	r.set(func(s *Status) { s.Quota = &Quota{Used: 950, Limit: 1000} })
+	m, _ = r.Measure(dir)
+	if !m.Known || m.Fits || m.Free != 0 {
+		t.Fatalf("with quota: %+v", m)
+	}
+	if _, err := r.Measure(p.Root); err == nil {
+		t.Fatal("sync folder should be rejected before scanning")
+	}
+}
+
+func TestNormalizeFoldersKeepsMissingKnown(t *testing.T) {
+	root := t.TempDir()
+	gone := filepath.Join(root, "unplugged")
+	fresh := filepath.Join(root, "new")
+	os.Mkdir(fresh, 0o755)
+	got, err := normalizeFolders([]string{gone, fresh}, filepath.Join(root, "sync"), []string{gone})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %v %v", got, err)
+	}
+	if _, err := normalizeFolders([]string{gone}, filepath.Join(root, "sync"), nil); err == nil {
+		t.Fatal("unknown missing folder must be rejected")
+	}
+}
+
+func TestEditConfigConcurrent(t *testing.T) {
+	p := Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			editConfig(p, func(c *AppConfig) error {
+				c.Exclude = append(c.Exclude, "x")
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	c, _ := loadAppConfig(p)
+	if len(c.Exclude) != 20 {
+		t.Fatalf("lost updates: %d of 20", len(c.Exclude))
+	}
+}
+
+func TestEditConfigSkipsUnchangedWrite(t *testing.T) {
+	p := Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}
+	editConfig(p, func(c *AppConfig) error { c.Every = 15; return nil })
+	past := time.Now().Add(-time.Hour)
+	os.Chtimes(p.appConfig(), past, past)
+	editConfig(p, func(*AppConfig) error { return nil })
+	info, _ := os.Stat(p.appConfig())
+	if !info.ModTime().Equal(past) {
+		t.Fatal("unchanged config was rewritten")
+	}
+	editConfig(p, func(c *AppConfig) error { c.Every = 60; return nil })
+	if c, _ := loadAppConfig(p); c.Every != 60 {
+		t.Fatal("changed config not saved")
 	}
 }

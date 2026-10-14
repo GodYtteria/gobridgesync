@@ -10,8 +10,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,33 +24,36 @@ import (
 const recentLimit = 50
 
 type Status struct {
-	State          string    `json:"state"`
-	Message        string    `json:"message"`
-	LastSync       time.Time `json:"lastSync"`
-	LastError      string    `json:"lastError"`
-	Recent         []string  `json:"recent"`
-	Paused         bool      `json:"paused"`
-	HasCredentials bool      `json:"hasCredentials"`
-	LoggedIn       bool      `json:"loggedIn"`
-	Root           string    `json:"root"`
-	Home           string    `json:"home"`
-	Folders        []string  `json:"folders"`
-	Exclude        []string  `json:"exclude"`
-	TwoWay         bool      `json:"twoWay"`
-	StorageLimit   int       `json:"storageLimit"`
-	SpeedLimitKB   int       `json:"speedLimitKB"`
-	Every          int       `json:"intervalMinutes"`
-	StartAtLogin   bool      `json:"startAtLogin"`
-	AutoUpdate     bool      `json:"autoUpdate"`
-	Version        string    `json:"version"`
-	AppName        string    `json:"appName"`
-	Update         string    `json:"updateAvailable"`
-	Updating       bool      `json:"updating"`
-	Target         string    `json:"target"`
-	Progress       Progress  `json:"progress"`
-	Quota          *Quota    `json:"quota"`
-	LastRun        *RunStats `json:"lastRun"`
-	Issues         []Issue   `json:"issues"`
+	State          string                `json:"state"`
+	Message        string                `json:"message"`
+	LastSync       time.Time             `json:"lastSync"`
+	LastError      string                `json:"lastError"`
+	Recent         []string              `json:"recent"`
+	Paused         bool                  `json:"paused"`
+	HasCredentials bool                  `json:"hasCredentials"`
+	LoggedIn       bool                  `json:"loggedIn"`
+	Root           string                `json:"root"`
+	Home           string                `json:"home"`
+	Folders        []string              `json:"folders"`
+	Exclude        []string              `json:"exclude"`
+	Suggestions    []string              `json:"suggestions"`
+	FolderSizes    map[string]FolderSize `json:"folderSizes"`
+	TwoWay         bool                  `json:"twoWay"`
+	StorageLimit   int                   `json:"storageLimit"`
+	SpeedLimitKB   int                   `json:"speedLimitKB"`
+	Every          int                   `json:"intervalMinutes"`
+	StartAtLogin   bool                  `json:"startAtLogin"`
+	AutoUpdate     bool                  `json:"autoUpdate"`
+	Version        string                `json:"version"`
+	AppName        string                `json:"appName"`
+	OS             string                `json:"os"`
+	Update         string                `json:"updateAvailable"`
+	Updating       bool                  `json:"updating"`
+	Target         string                `json:"target"`
+	Progress       Progress              `json:"progress"`
+	Quota          *Quota                `json:"quota"`
+	LastRun        *RunStats             `json:"lastRun"`
+	Issues         []Issue               `json:"issues"`
 }
 
 type RunStats struct {
@@ -138,6 +143,7 @@ type Runner struct {
 	updater  *updater
 	restart  func()
 	jobs     chan restoreJob
+	signout  chan chan error
 	snapshot atomic.Pointer[Remote]
 	srv      atomic.Pointer[drive.Service]
 
@@ -154,7 +160,7 @@ type Runner struct {
 }
 
 func newRunner(paths Paths, force bool) *Runner {
-	cfg, err := loadAppConfig(paths)
+	cfg, err := editConfig(paths, func(*AppConfig) error { return nil })
 	if err != nil {
 		log.Printf("read settings: %v", err)
 	}
@@ -168,7 +174,34 @@ func newRunner(paths Paths, force bool) *Runner {
 		updater: newUpdater(),
 		restart: func() {},
 		jobs:    make(chan restoreJob, 1),
+		signout: make(chan chan error),
 	}
+}
+
+func (r *Runner) SignOut(ctx context.Context) error {
+	done := make(chan error, 1)
+	select {
+	case r.signout <- done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return <-done
+}
+
+func (r *Runner) signOutNow(ps *passState) error {
+	*ps = passState{}
+	r.snapshot.Store(nil)
+	r.srv.Store(nil)
+	err := errors.Join(deleteToken(r.paths), resetAccountState(r.paths))
+	r.mu.Lock()
+	r.loggedIn = false
+	r.mu.Unlock()
+	r.set(func(s *Status) {
+		s.Quota, s.Update, s.State, s.Message = nil, "", "signin", "Sign in with Google to begin"
+	})
+	r.addRecent("signed out")
+	r.Trigger()
+	return err
 }
 
 func fileExists(p string) bool {
@@ -187,9 +220,11 @@ func (r *Runner) Snapshot() Status {
 	st.Root = r.paths.Root
 	st.Version = version
 	st.AppName = releaseName()
+	st.OS = runtime.GOOS
 	st.Home, _ = os.UserHomeDir()
 	st.Target = "My Drive/" + backupTarget()
 	if cfg, err := loadAppConfig(r.paths); err == nil {
+		st.Suggestions = folderSuggestions(st.Home, cfg.Folders, r.paths.Root)
 		st.Folders, st.TwoWay, st.StorageLimit, st.Exclude = cfg.Folders, cfg.TwoWay, cfg.limit(), cfg.Exclude
 		st.Every, st.StartAtLogin, st.AutoUpdate, st.SpeedLimitKB = cfg.every(), cfg.startAtLogin(), cfg.autoUpdate(), cfg.speed()
 	}
@@ -223,12 +258,11 @@ func (r *Runner) Trigger() {
 }
 
 func (r *Runner) UpdateConfig(f func(*AppConfig)) error {
-	cfg, err := loadAppConfig(r.paths)
+	cfg, err := editConfig(r.paths, func(c *AppConfig) error {
+		f(c)
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	f(&cfg)
-	if err := cfg.save(r.paths); err != nil {
 		return err
 	}
 	r.set(func(s *Status) { s.Paused = cfg.Paused })
@@ -305,6 +339,7 @@ func (r *Runner) pass(ctx context.Context, ps *passState) error {
 		notify:   r.addRecent,
 		progress: func(p Progress) { r.set(func(st *Status) { st.Progress = p }) },
 		quota:    func(q Quota) { r.set(func(st *Status) { st.Quota = &q }) },
+		sizes:    func(m map[string]FolderSize) { r.set(func(st *Status) { st.FolderSizes = m }) },
 	}
 	err = errors.Join(b.Run(ctx), saveBackup())
 	if errors.Is(err, errPaused) || !cfg.TwoWay {
@@ -398,6 +433,8 @@ func (r *Runner) Loop(ctx context.Context) {
 		case <-wait:
 		case job := <-r.jobs:
 			r.restoreNow(ctx, ps, job)
+		case done := <-r.signout:
+			done <- r.signOutNow(ps)
 		}
 	}
 }
@@ -586,4 +623,36 @@ func (r *Runner) WatchLoop(ctx context.Context) {
 		}
 		last, seenPass = fp, passAt
 	}
+}
+
+type Measurement struct {
+	FolderSize
+	Free  int64 `json:"free"`
+	Known bool  `json:"known"`
+	Fits  bool  `json:"fits"`
+}
+
+func (r *Runner) Measure(raw string) (Measurement, error) {
+	dir, err := expandHome(strings.TrimSpace(raw))
+	if err != nil {
+		return Measurement{}, err
+	}
+	if !filepath.IsAbs(dir) {
+		return Measurement{}, errors.New("use a full path like ~/Documents")
+	}
+	cfg, _ := loadAppConfig(r.paths)
+	if _, err := normalizeFolders(append(append([]string{}, cfg.Folders...), dir), r.paths.Root, cfg.Folders); err != nil {
+		return Measurement{}, err
+	}
+	files, _, errs := scanTree(filepath.Clean(dir), newExcluder(cfg.Exclude))
+	if files == nil {
+		return Measurement{}, errors.Join(errs...)
+	}
+	m := Measurement{FolderSize: measureFiles(files), Fits: true}
+	if q := r.Snapshot().Quota; q != nil && q.Limit > 0 {
+		m.Known = true
+		m.Free = max(q.Limit*int64(cfg.limit())/100-q.Used, 0)
+		m.Fits = m.Bytes <= m.Free
+	}
+	return m, nil
 }

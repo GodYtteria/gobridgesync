@@ -27,10 +27,6 @@ const (
 
 var errPaused = errors.New("paused")
 
-var skipDirs = map[string]bool{
-	".git": true, "node_modules": true, ".cache": true, "__pycache__": true, ".venv": true, ".Trash": true,
-}
-
 type Progress struct {
 	Phase      string `json:"phase"`
 	Uploaded   int    `json:"uploaded"`
@@ -38,6 +34,20 @@ type Progress struct {
 	FilesTotal int    `json:"filesTotal"`
 	BytesDone  int64  `json:"bytesDone"`
 	BytesTotal int64  `json:"bytesTotal"`
+}
+
+type FolderSize struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+func measureFiles(files map[string]LocalFile) FolderSize {
+	var s FolderSize
+	for _, f := range files {
+		s.Files++
+		s.Bytes += f.Size
+	}
+	return s
 }
 
 type Quota struct {
@@ -54,6 +64,7 @@ type Backup struct {
 	stop     func() bool
 	limitPct int
 	progress func(Progress)
+	sizes    func(map[string]FolderSize)
 	quota    func(Quota)
 
 	mu       sync.Mutex
@@ -124,7 +135,7 @@ func scanTree(root string, ex *excluder) (map[string]LocalFile, []string, []erro
 			return nil
 		}
 		name := d.Name()
-		if d.IsDir() && (skipDirs[name] || !validName(name)) {
+		if d.IsDir() && !validName(name) {
 			return filepath.SkipDir
 		}
 		rel, err := filepath.Rel(root, p)
@@ -282,6 +293,7 @@ func (b *Backup) Run(ctx context.Context) error {
 	var dirs []string
 	complete := true
 
+	sizes := map[string]FolderSize{}
 	for i, dir := range b.folders {
 		files, subdirs, scanErrs := scanTree(dir, b.exclude)
 		errs = append(errs, scanErrs...)
@@ -289,6 +301,7 @@ func (b *Backup) Run(ctx context.Context) error {
 			complete = false
 			continue
 		}
+		sizes[dir] = measureFiles(files)
 		prefix := path.Join(target, names[i])
 		for _, d := range emptyDirs(files, subdirs) {
 			dirs = append(dirs, path.Join(prefix, d))
@@ -321,6 +334,9 @@ func (b *Backup) Run(ctx context.Context) error {
 			}
 			jobs = append(jobs, *job)
 		}
+	}
+	if b.sizes != nil {
+		b.sizes(sizes)
 	}
 	q, err := b.readQuota(ctx)
 	if err != nil {

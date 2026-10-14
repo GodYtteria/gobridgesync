@@ -43,7 +43,7 @@ Change these from the tray menu or the web interface.
 |---|---|---|
 | Start at login | On | On, Off |
 | Sync | Every 5 minutes | Instantly when files change, every 1, 5, 15, or 60 minutes, or Manual only |
-| Skip these | None | Names like `*.tmp` or `node_modules`, or folders like `~/Documents/SD-Backup` |
+| Don't back up | None | Folders you pick, or names like `*.tmp` or `node_modules` |
 | Speed limit | Unlimited | 10 MB/s, 5 MB/s, 1 MB/s, 512 KB/s |
 | Storage limit | 90% | All, 90%, 75%, 50% of your Drive storage |
 | Sync across computers | On | On, Off |
@@ -68,7 +68,7 @@ Use your own free Google OAuth client. One time, about 5 minutes. The app shows 
 - Google allows 750 GB of uploads per user per day. Rate limits are retried automatically.
 - Removed files go to `~/.local/share/gobridgesync/trash/`, not straight to deletion.
 - Google keeps older versions of a file for 30 days; restore them from **Restore → Versions**.
-- Skipped files are never deleted from Drive or other computers.
+- Files in **Don't back up** are never deleted from Drive or other computers.
 - Quitting from the tray asks for confirmation, so backups don't stop by accident.
 - Updates are checked daily. Each release is signed, and GoBridgeSync refuses any update whose signature doesn't match the key built into the app.
 

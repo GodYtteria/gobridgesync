@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -137,10 +136,10 @@ func finishLogin(ctx context.Context, p Paths, cfg *oauth2.Config, code, verifie
 	if err != nil {
 		return err
 	}
-	if err := saveToken(p, tok); err != nil {
+	if err := resetAccountState(p); err != nil {
 		return err
 	}
-	if err := os.Remove(p.index()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := saveToken(p, tok); err != nil {
 		return err
 	}
 	return writeFileAtomic(p.scope(), []byte(loginScope(full)), 0o600)

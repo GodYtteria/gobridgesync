@@ -145,6 +145,15 @@ func (u *ui) routes() http.Handler {
 		}
 		return u.runner.Browse(in.Path)
 	}))
+	mux.HandleFunc("POST /api/measure", u.jsonPost(func(r *http.Request) (any, error) {
+		var in struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			return nil, errors.New("invalid request")
+		}
+		return u.runner.Measure(in.Path)
+	}))
 	mux.HandleFunc("POST /api/versions", u.jsonPost(func(r *http.Request) (any, error) {
 		var in struct {
 			FileID string `json:"fileId"`
@@ -161,6 +170,7 @@ func (u *ui) routes() http.Handler {
 		}
 		return u.runner.QueueRestore(job)
 	}))
+	mux.HandleFunc("POST /api/signout", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.SignOut(r.Context()) }))
 	mux.HandleFunc("POST /api/update", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.ApplyUpdate(u.ctx) }))
 	mux.HandleFunc("POST /api/dirs", u.dirs)
 	mux.HandleFunc("POST /api/clear-issues", u.post(func(w http.ResponseWriter, r *http.Request) error { u.runner.ClearIssues(); return nil }))
@@ -272,6 +282,7 @@ type settingsInput struct {
 }
 
 func applySettings(cfg AppConfig, in settingsInput, syncRoot string) (AppConfig, error) {
+	known := cfg.Folders
 	if in.Limit != nil && !storageLimits[*in.Limit] {
 		return cfg, errors.New("storage limit must be 50, 75, 90, or 100 percent")
 	}
@@ -279,7 +290,7 @@ func applySettings(cfg AppConfig, in settingsInput, syncRoot string) (AppConfig,
 		return cfg, errors.New("sync must be instant, manual, or every 1, 5, 15, or 60 minutes")
 	}
 	if in.Folders != nil {
-		folders, err := normalizeFolders(*in.Folders, syncRoot)
+		folders, err := normalizeFolders(*in.Folders, syncRoot, known)
 		if err != nil {
 			return cfg, err
 		}
@@ -321,21 +332,27 @@ func (u *ui) settings(w http.ResponseWriter, r *http.Request) error {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCredentials)).Decode(&in); err != nil {
 		return errors.New("invalid settings")
 	}
-	cfg, err := loadAppConfig(u.paths)
-	if err != nil {
-		return err
-	}
-	cfg, err = applySettings(cfg, in, u.paths.Root)
+	var before *bool
+	_, err := editConfig(u.paths, func(c *AppConfig) error {
+		next, err := applySettings(*c, in, u.paths.Root)
+		if err != nil {
+			return err
+		}
+		before = c.Startup
+		*c = next
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 	if in.Startup != nil {
 		if err := setAutostart(*in.Startup); err != nil {
-			return fmt.Errorf("start at login: %w", err)
+			_, revertErr := editConfig(u.paths, func(c *AppConfig) error {
+				c.Startup = before
+				return nil
+			})
+			return errors.Join(fmt.Errorf("start at login: %w", err), revertErr)
 		}
-	}
-	if err := cfg.save(u.paths); err != nil {
-		return err
 	}
 	u.runner.addRecent("settings saved")
 	u.runner.Trigger()

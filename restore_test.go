@@ -134,3 +134,26 @@ func TestFreeNameStopsOnError(t *testing.T) {
 		t.Fatal("expected error instead of looping")
 	}
 }
+
+func TestResetAccountState(t *testing.T) {
+	p := Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}
+	keep := p.appConfig()
+	files := []string{p.index(), p.state(), p.backupState(), p.sessions(), p.scope(), keep}
+	for _, f := range files {
+		os.WriteFile(f, []byte("{}"), 0o600)
+	}
+	if err := resetAccountState(p); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files[:5] {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("%s not removed", filepath.Base(f))
+		}
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatal("settings removed on sign out")
+	}
+	if err := resetAccountState(p); err != nil {
+		t.Fatal("second reset should be a no-op")
+	}
+}

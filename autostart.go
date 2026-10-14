@@ -18,20 +18,17 @@ func executable() (string, error) {
 }
 
 func ensureAutostart(p Paths) {
-	cfg, err := loadAppConfig(p)
-	if err != nil {
-		log.Printf("read settings: %v", err)
-		return
-	}
-	on := cfg.startAtLogin()
-	if err := setAutostart(on); err != nil {
-		log.Printf("start at login: %v", err)
-		return
-	}
-	if cfg.Startup == nil {
-		cfg.Startup = &on
-		if err := cfg.save(p); err != nil {
-			log.Printf("save settings: %v", err)
+	_, err := editConfig(p, func(c *AppConfig) error {
+		on := c.startAtLogin()
+		if err := setAutostart(on); err != nil {
+			return err
 		}
+		if c.Startup == nil {
+			c.Startup = &on
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("start at login: %v", err)
 	}
 }

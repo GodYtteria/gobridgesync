@@ -444,3 +444,35 @@ func TestEditConfigSkipsUnchangedWrite(t *testing.T) {
 		t.Fatal("changed config not saved")
 	}
 }
+
+func TestMassDeleteAbsoluteCap(t *testing.T) {
+	if !massDelete(massDeleteMax+1, 280000) {
+		t.Fatal("thousands of deletes in a large tree must ask first")
+	}
+	if massDelete(massDeleteMax, 280000) {
+		t.Fatal("cap is exclusive")
+	}
+}
+
+func TestAllowDeletesOnce(t *testing.T) {
+	r := newRunner(Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}, false)
+	if r.allowDeletes(6000) {
+		t.Fatal("allowed without asking")
+	}
+	r.set(func(s *Status) { s.PendingDeletes = 6000 })
+	r.AllowDeletes()
+	if r.Snapshot().PendingDeletes != 0 {
+		t.Fatal("banner must clear as soon as the user allows")
+	}
+	if r.allowDeletes(6601) {
+		t.Fatal("allowed far more than the user saw")
+	}
+	if r.allowDeletes(6000) {
+		t.Fatal("a refused approval must not linger for a later pass")
+	}
+	r.set(func(s *Status) { s.PendingDeletes = 6000 })
+	r.AllowDeletes()
+	if !r.allowDeletes(6600) || r.allowDeletes(6000) {
+		t.Fatal("approval must apply once")
+	}
+}

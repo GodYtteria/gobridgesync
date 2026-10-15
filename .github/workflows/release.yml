@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    if: github.repository == 'GodYtteria/gobridgesync'
+    if: github.repository == 'GodYtteria/gobridgesync-desktop'
     strategy:
       matrix:
         include:

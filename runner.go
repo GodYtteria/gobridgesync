@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,8 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,15 +41,23 @@ type Status struct {
 	Every          int                   `json:"intervalMinutes"`
 	StartAtLogin   bool                  `json:"startAtLogin"`
 	AutoUpdate     bool                  `json:"autoUpdate"`
+	AutoSortInbox  bool                  `json:"autoSortInbox"`
+	SendReports    bool                  `json:"sendReports"`
+	AskReports     bool                  `json:"askReports"`
+	ReportsReady   bool                  `json:"reportsAvailable"`
 	Version        string                `json:"version"`
 	AppName        string                `json:"appName"`
 	OS             string                `json:"os"`
+	Channel        string                `json:"channel"`
 	Update         string                `json:"updateAvailable"`
 	Updating       bool                  `json:"updating"`
 	LoginURL       string                `json:"loginUrl"`
+	Pending        []string              `json:"pending"`
+	PendingCount   int                   `json:"pendingCount"`
 	Target         string                `json:"target"`
 	Progress       Progress              `json:"progress"`
 	Quota          *Quota                `json:"quota"`
+	PendingDeletes int                   `json:"pendingDeletes"`
 	LastRun        *RunStats             `json:"lastRun"`
 	Issues         []Issue               `json:"issues"`
 }
@@ -68,82 +73,21 @@ type RunStats struct {
 	Errors     int       `json:"errors"`
 }
 
-type Issue struct {
-	Time    time.Time `json:"time"`
-	Message string    `json:"message"`
-}
-
 const issueLimit = 100
-
-func flatten(err error) []string {
-	if err == nil {
-		return nil
-	}
-	if j, ok := err.(interface{ Unwrap() []error }); ok {
-		var out []string
-		for _, e := range j.Unwrap() {
-			out = append(out, flatten(e)...)
-		}
-		return out
-	}
-	return []string{err.Error()}
-}
-
-func (r *Runner) alert(issues []string, q *Quota, now time.Time) {
-	var send [][2]string
-	r.mu.Lock()
-	if len(issues) > 0 {
-		msg := issueSummary(issues)
-		if shouldAlert(r.alertMsg, r.alertAt, now, msg) {
-			r.alertMsg, r.alertAt = msg, now
-			send = append(send, [2]string{"GoBridgeSync: backup problem", msg})
-		}
-		r.alerting = true
-	} else if r.alerting {
-		r.alerting, r.alertMsg = false, ""
-		send = append(send, [2]string{"GoBridgeSync", "Backup is working again."})
-	}
-	if w := quotaWarning(q); w != "" && now.Sub(r.quotaAt) >= quotaAlertRepeat {
-		r.quotaAt = now
-		send = append(send, [2]string{"GoBridgeSync: storage almost full", w})
-	}
-	notify := r.notify
-	r.mu.Unlock()
-	for _, n := range send {
-		if err := notify(n[0], n[1]); err != nil {
-			log.Printf("notify: %v", err)
-		}
-	}
-}
-
-func mergeIssues(existing []Issue, msgs []string, now time.Time) []Issue {
-	out := make([]Issue, 0, len(existing)+len(msgs))
-	fresh := map[string]bool{}
-	for _, m := range msgs {
-		if !fresh[m] {
-			fresh[m] = true
-			out = append(out, Issue{Time: now, Message: m})
-		}
-	}
-	for _, i := range existing {
-		if !fresh[i.Message] {
-			out = append(out, i)
-		}
-	}
-	return out
-}
-
-func (r *Runner) ClearIssues() {
-	r.set(func(s *Status) { s.Issues = nil })
-	r.saveHistory()
-}
 
 type Runner struct {
 	paths    Paths
 	force    bool
 	trigger  chan struct{}
+	changed  chan struct{}
+	allowed  int
+	allowAt  time.Time
+	local    *localCache
+	pending  []string
+	reports  *reporter
 	updater  *updater
 	restart  func()
+	passStop context.CancelFunc
 	jobs     chan restoreJob
 	signout  chan chan error
 	snapshot atomic.Pointer[Remote]
@@ -171,10 +115,13 @@ func newRunner(paths Paths, force bool) *Runner {
 		paths:   paths,
 		force:   force,
 		trigger: make(chan struct{}, 1),
+		changed: make(chan struct{}, 1),
+		local:   newLocalCache(),
 		status:  Status{State: "starting", Recent: h.Recent, Issues: h.Issues, LastRun: h.LastRun, Paused: cfg.Paused},
 		notify:  desktopNotify,
 		updater: newUpdater(),
 		restart: func() {},
+		reports: newReporter(paths.logFile()),
 		jobs:    make(chan restoreJob, 1),
 		signout: make(chan chan error),
 	}
@@ -223,12 +170,16 @@ func (r *Runner) Snapshot() Status {
 	st.Version = version
 	st.AppName = releaseName()
 	st.OS = runtime.GOOS
+	st.Channel = buildChannel()
 	st.Home, _ = os.UserHomeDir()
 	st.Target = "My Drive/" + backupTarget()
 	if cfg, err := loadAppConfig(r.paths); err == nil {
 		st.Suggestions = folderSuggestions(st.Home, cfg.Folders, r.paths.Root)
 		st.Folders, st.TwoWay, st.StorageLimit, st.Exclude = cfg.Folders, cfg.TwoWay, cfg.limit(), cfg.Exclude
 		st.Every, st.StartAtLogin, st.AutoUpdate, st.SpeedLimitKB = cfg.every(), cfg.startAtLogin(), cfg.autoUpdate(), cfg.speed()
+		st.AutoSortInbox = cfg.inboxSort()
+		st.ReportsReady = reportURL != ""
+		st.SendReports, st.AskReports = st.ReportsReady && cfg.sendReports(), st.ReportsReady && cfg.reportsUndecided()
 	}
 	if r.loggingIn {
 		st.State = "login"
@@ -244,12 +195,20 @@ func (r *Runner) set(f func(*Status)) {
 }
 
 func (r *Runner) addRecent(line string) {
+	log.Print(line)
 	r.set(func(s *Status) {
 		s.Recent = append([]string{time.Now().Format("15:04:05") + " " + line}, s.Recent...)
 		if len(s.Recent) > recentLimit {
 			s.Recent = s.Recent[:recentLimit]
 		}
 	})
+}
+
+func (r *Runner) Changed() {
+	select {
+	case r.changed <- struct{}{}:
+	default:
+	}
 }
 
 func (r *Runner) Trigger() {
@@ -267,7 +226,13 @@ func (r *Runner) UpdateConfig(f func(*AppConfig)) error {
 	if err != nil {
 		return err
 	}
-	r.set(func(s *Status) { s.Paused = cfg.Paused })
+	r.mu.Lock()
+	r.status.Paused = cfg.Paused
+	stop := r.passStop
+	r.mu.Unlock()
+	if cfg.Paused && stop != nil {
+		stop()
+	}
 	r.Trigger()
 	return nil
 }
@@ -293,9 +258,13 @@ func (r *Runner) Login(ctx context.Context, returnURL string) error {
 		r.status.LoginURL = ""
 		r.mu.Unlock()
 		if err != nil {
+			log.Printf("sign-in failed: %v", err)
 			r.set(func(s *Status) { s.LastError = "sign-in: " + err.Error() })
 			return
 		}
+		r.mu.Lock()
+		r.loggedIn = true
+		r.mu.Unlock()
 		r.addRecent("signed in")
 		r.Trigger()
 	}()
@@ -314,11 +283,15 @@ type passState struct {
 	backup  *State
 	sync    *Syncer
 	index   *driveIndex
+	ex      *excluder
+	exList  []string
+
+	backupIDs *idJournal
 }
 
-func (r *Runner) pass(ctx context.Context, ps *passState) error {
+func (r *Runner) pass(ctx, connCtx context.Context, ps *passState) error {
 	if ps.srv == nil {
-		srv, client, err := connect(ctx, r.paths)
+		srv, client, err := connect(connCtx, r.paths)
 		if err != nil {
 			return fmt.Errorf("connect to Google Drive: %w", err)
 		}
@@ -331,6 +304,9 @@ func (r *Runner) pass(ctx context.Context, ps *passState) error {
 	if err != nil {
 		return fmt.Errorf("read settings: %w", err)
 	}
+	if ps.backupIDs == nil {
+		ps.backupIDs = loadIDJournal(filepath.Join(r.paths.StateDir, "backup-ids"))
+	}
 	if ps.backup == nil {
 		if ps.backup, err = loadState(r.paths.backupState()); err != nil {
 			return err
@@ -339,14 +315,28 @@ func (r *Runner) pass(ctx context.Context, ps *passState) error {
 	saveBackup := func() error { return ps.backup.save(r.paths.backupState()) }
 	r.set(func(st *Status) { st.State, st.Message = "syncing", "Backing up" })
 	b := &Backup{
-		srv: ps.srv, folders: cfg.Folders, st: ps.backup, save: saveBackup, stop: r.isPaused, limitPct: cfg.limit(), index: ps.index,
+		srv: ps.srv, folders: cfg.Folders, st: ps.backup, save: saveBackup, stop: r.isPaused, limitPct: cfg.limit(), index: ps.index, journal: ps.backupIDs,
 		exclude:  newExcluder(cfg.Exclude),
 		notify:   r.addRecent,
 		progress: func(p Progress) { r.set(func(st *Status) { st.Progress = p }) },
 		quota:    func(q Quota) { r.set(func(st *Status) { st.Quota = &q }) },
 		sizes:    func(m map[string]FolderSize) { r.set(func(st *Status) { st.FolderSizes = m }) },
+		pending:  r.setPending,
+		more:     r.Trigger,
 	}
-	err = errors.Join(b.Run(ctx), saveBackup())
+	runErr := b.Run(ctx)
+	saveErr := saveBackup()
+	if saveErr == nil {
+		saveErr = ps.backupIDs.prune(func(key string) bool {
+			kind, p, _ := strings.Cut(key, ":")
+			if kind == "folder" {
+				return b.remote != nil && b.remote.Folders[p] != ""
+			}
+			_, ok := ps.backup.Files[p]
+			return ok
+		})
+	}
+	err = errors.Join(runErr, saveErr)
 	if errors.Is(err, errPaused) || !cfg.TwoWay {
 		return err
 	}
@@ -359,9 +349,15 @@ func (r *Runner) pass(ctx context.Context, ps *passState) error {
 			return errors.Join(err, lerr)
 		}
 		ps.sync = &Syncer{srv: ps.srv, paths: r.paths, st: st, force: r.force, notify: r.addRecent, stop: r.isPaused, index: ps.index,
-			progress: func(p Progress) { r.set(func(s *Status) { s.Progress = p }) }}
+			progress: func(p Progress) { r.set(func(s *Status) { s.Progress = p }) }, pending: r.setPending, more: r.Trigger, allow: r.allowDeletes,
+			journal: loadIDJournal(filepath.Join(r.paths.StateDir, "sync-ids"))}
 	}
-	ps.sync.exclude, ps.sync.limiter, ps.sync.resumer = newExcluder(cfg.Exclude), cfg.limiter(), ps.resumer
+	if ps.ex == nil || !slices.Equal(ps.exList, cfg.Exclude) {
+		ps.ex, ps.exList = newExcluder(cfg.Exclude), slices.Clone(cfg.Exclude)
+	}
+	ps.sync.exclude, ps.sync.limiter, ps.sync.resumer = ps.ex, cfg.limiter(), ps.resumer
+	ps.sync.inbox = cfg.inboxSort()
+	ps.sync.cache, ps.sync.excludeList = r.local, cfg.Exclude
 	r.set(func(st *Status) { st.State, st.Message = "syncing", "Syncing "+filepath.Base(r.paths.Root) })
 	return errors.Join(err, ps.sync.Run(ctx), ps.sync.save())
 }
@@ -376,21 +372,54 @@ func (r *Runner) checkLogin() bool {
 
 func (r *Runner) Loop(ctx context.Context) {
 	ps := &passState{}
+	var lastStart time.Time
+	var lastTook time.Duration
 	for {
 		switch {
-		case r.isPaused():
-			r.set(func(st *Status) { st.State, st.Message = "paused", "Paused" })
 		case !hasClient(r.paths):
 			*ps = passState{}
 			r.set(func(st *Status) { st.State, st.Message = "setup", "Add your Google OAuth client file to begin" })
 		case !r.checkLogin():
 			*ps = passState{}
 			r.set(func(st *Status) { st.State, st.Message = "signin", "Sign in with Google to begin" })
+		case r.isPaused():
+			r.set(func(st *Status) { st.State, st.Message = "paused", "Paused" })
 		default:
 			started := time.Now()
-			err := r.pass(ctx, ps)
+			passCtx, cancel := context.WithCancel(ctx)
+			r.mu.Lock()
+			r.passStop = cancel
+			r.mu.Unlock()
+			err := r.pass(passCtx, ctx, ps)
+			lastStart, lastTook = started, time.Since(started)
+			r.mu.Lock()
+			if started.After(r.allowAt) {
+				r.allowed = 0
+			}
+			r.mu.Unlock()
+			if ps.sync != nil && ps.sync.planTook > 0 {
+				lastTook = ps.sync.planTook
+			}
+			stoppedEarly := passCtx.Err() != nil
+			cancel()
+			r.mu.Lock()
+			r.passStop = nil
+			r.mu.Unlock()
+			if ctx.Err() == nil && stoppedEarly {
+				err = errPaused
+			}
 			r.refreshSnapshot(ps)
-			debug.FreeOSMemory()
+			var mde *massDeleteError
+			pending := 0
+			if errors.As(err, &mde) {
+				pending = mde.deletes
+			}
+			r.set(func(st *Status) {
+				st.PendingDeletes = pending
+				if pending == 0 {
+					st.Issues = slices.DeleteFunc(st.Issues, func(i Issue) bool { return strings.HasSuffix(i.Message, massDeleteWaiting) })
+				}
+			})
 			if ctx.Err() != nil {
 				return
 			}
@@ -399,6 +428,13 @@ func (r *Runner) Loop(ctx context.Context) {
 				issues = nil
 			} else {
 				r.alert(issues, r.Snapshot().Quota, time.Now())
+				if cfg, cerr := loadAppConfig(r.paths); cerr == nil && cfg.sendReports() && reportURL != "" && len(issues) > 0 {
+					go func(problems []string) {
+						if n := r.reports.send(ctx, problems, time.Now()); n > 0 {
+							log.Printf("sent %d problem report(s)", n)
+						}
+					}(append([]string(nil), issues...))
+				}
 			}
 			r.set(func(st *Status) {
 				now := time.Now()
@@ -436,6 +472,15 @@ func (r *Runner) Loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-r.trigger:
+		case <-r.changed:
+			if rest := time.Until(lastStart.Add(passGap(lastTook))); rest > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-r.trigger:
+				case <-time.After(rest):
+				}
+			}
 		case <-wait:
 		case job := <-r.jobs:
 			r.restoreNow(ctx, ps, job)
@@ -445,86 +490,11 @@ func (r *Runner) Loop(ctx context.Context) {
 	}
 }
 
-const (
-	updateFirstCheck = 2 * time.Minute
-	updateEvery      = 24 * time.Hour
-	updateRetry      = 10 * time.Minute
-)
-
-func (r *Runner) UpdateLoop(ctx context.Context) {
-	wait := updateFirstCheck
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(wait):
-		}
-		wait = updateEvery
-		tag, err := r.updater.available(ctx)
-		if err != nil {
-			log.Printf("check for updates: %v", err)
-			wait = updateRetry
-			continue
-		}
-		r.set(func(s *Status) { s.Update = tag })
-		if tag == "" {
-			continue
-		}
-		cfg, err := loadAppConfig(r.paths)
-		if err != nil || !cfg.autoUpdate() || !canReplaceExecutable() {
-			continue
-		}
-		if r.Snapshot().State == "syncing" {
-			wait = updateRetry
-			continue
-		}
-		if err := r.ApplyUpdate(ctx); err != nil {
-			log.Printf("update: %v", err)
-			wait = updateRetry
-		}
-	}
-}
-
-func (r *Runner) ApplyUpdate(ctx context.Context) error {
-	if !canReplaceExecutable() {
-		return errors.New("GoBridgeSync was installed by your package manager; update it there")
-	}
-	r.mu.Lock()
-	tag, busy := r.status.Update, r.status.Updating
-	if tag == "" || busy {
-		r.mu.Unlock()
-		return errors.New("no update to install")
-	}
-	r.status.Updating = true
-	r.mu.Unlock()
-	err := r.installUpdate(ctx, tag)
-	if err != nil {
-		r.set(func(s *Status) { s.Updating = false })
-		r.addRecent("update failed: " + err.Error())
-		return err
-	}
-	r.addRecent("updated to " + tag + ", restarting")
-	r.restart()
-	return nil
-}
-
-func (r *Runner) installUpdate(ctx context.Context, tag string) error {
-	bin, err := r.updater.download(ctx, tag)
-	if err != nil {
-		return err
-	}
-	exe, err := executable()
-	if err != nil {
-		return err
-	}
-	return replaceExecutable(exe, bin)
-}
-
 func (r *Runner) refreshSnapshot(ps *passState) {
 	if ps.index == nil {
 		return
 	}
-	rem, err := buildRemote(ps.index.Files, ps.index.RootID)
+	rem, err := ps.index.snapshot()
 	if err == nil {
 		r.snapshot.Store(rem)
 	}
@@ -550,115 +520,4 @@ func (r *Runner) restoreNow(ctx context.Context, ps *passState, job restoreJob) 
 	r.saveHistory()
 }
 
-func (r *Runner) recordIssues(msgs []string) {
-	r.set(func(s *Status) {
-		s.Issues = mergeIssues(s.Issues, msgs, time.Now())
-		if len(s.Issues) > issueLimit {
-			s.Issues = s.Issues[:issueLimit]
-		}
-	})
-}
-
-const (
-	instantRemoteCheck = time.Minute
-	watchEvery         = 10 * time.Second
-	watchEveryLarge    = 30 * time.Second
-	largeTree          = 10000
-)
-
-func passInterval(every int) (time.Duration, bool) {
-	switch {
-	case every == manualSync:
-		return 0, false
-	case every == instantSync:
-		return instantRemoteCheck, true
-	case every > 0:
-		return time.Duration(every) * time.Minute, true
-	}
-	return defaultEveryMinutes * time.Minute, true
-}
-
-func localFingerprint(cfg AppConfig, root string) (string, int) {
-	ex := newExcluder(cfg.Exclude)
-	h := sha256.New()
-	count := 0
-	add := func(prefix string, files map[string]LocalFile) {
-		count += len(files)
-		keys := make([]string, 0, len(files))
-		for k := range files {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(h, "%s/%s\x00%d\x00%d\n", prefix, k, files[k].Size, files[k].MTime)
-		}
-	}
-	for _, dir := range cfg.Folders {
-		files, _, _ := scanTree(dir, ex)
-		add(dir, files)
-	}
-	if cfg.TwoWay {
-		if files, err := scanLocal(root, ex); err == nil {
-			add(root, files)
-		}
-	}
-	return hex.EncodeToString(h.Sum(nil)), count
-}
-
-func (r *Runner) WatchLoop(ctx context.Context) {
-	last, every, seenPass := "", watchEvery, time.Time{}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(every):
-		}
-		cfg, err := loadAppConfig(r.paths)
-		if err != nil || cfg.every() != instantSync || r.isPaused() {
-			last = ""
-			continue
-		}
-		fp, files := localFingerprint(cfg, r.paths.Root)
-		every = watchEvery
-		if files > largeTree {
-			every = watchEveryLarge
-		}
-		passAt := r.Snapshot().LastSync
-		if last != "" && fp != last && passAt.Equal(seenPass) {
-			r.Trigger()
-		}
-		last, seenPass = fp, passAt
-	}
-}
-
-type Measurement struct {
-	FolderSize
-	Free  int64 `json:"free"`
-	Known bool  `json:"known"`
-	Fits  bool  `json:"fits"`
-}
-
-func (r *Runner) Measure(raw string) (Measurement, error) {
-	dir, err := expandHome(strings.TrimSpace(raw))
-	if err != nil {
-		return Measurement{}, err
-	}
-	if !filepath.IsAbs(dir) {
-		return Measurement{}, errors.New("use a full path like ~/Documents")
-	}
-	cfg, _ := loadAppConfig(r.paths)
-	if _, err := normalizeFolders(append(append([]string{}, cfg.Folders...), dir), r.paths.Root, cfg.Folders); err != nil {
-		return Measurement{}, err
-	}
-	files, _, errs := scanTree(filepath.Clean(dir), newExcluder(cfg.Exclude))
-	if files == nil {
-		return Measurement{}, errors.Join(errs...)
-	}
-	m := Measurement{FolderSize: measureFiles(files), Fits: true}
-	if q := r.Snapshot().Quota; q != nil && q.Limit > 0 {
-		m.Known = true
-		m.Free = max(q.Limit*int64(cfg.limit())/100-q.Used, 0)
-		m.Fits = m.Bytes <= m.Free
-	}
-	return m, nil
-}
+const pendingPreview = 20

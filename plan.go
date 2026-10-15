@@ -53,6 +53,8 @@ func decide(b *Entry, l *LocalFile, r *RemoteFile) Action {
 	return Noop
 }
 
+const massDeleteMax = 5000
+
 func massDelete(deletes, known int) bool {
-	return deletes > 20 && deletes*2 > known
+	return deletes > 20 && (deletes*2 > known || deletes > massDeleteMax)
 }

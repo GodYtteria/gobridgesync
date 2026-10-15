@@ -6,6 +6,8 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -250,5 +253,97 @@ func TestSyncerDownloadAll(t *testing.T) {
 	}
 	if last.FilesDone != 3 || last.Downloaded != 2 || last.Uploaded != 0 || last.Phase != "downloading" {
 		t.Fatalf("progress %+v", last)
+	}
+}
+
+func TestEnsureFolderConcurrent(t *testing.T) {
+	var mu sync.Mutex
+	created := map[string]int{}
+	var idSeq int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/generateIds") {
+			mu.Lock()
+			ids := []string{}
+			for range idBatch {
+				idSeq++
+				ids = append(ids, fmt.Sprintf(`"g%d"`, idSeq))
+			}
+			mu.Unlock()
+			fmt.Fprintf(w, `{"ids":[%s]}`, strings.Join(ids, ","))
+			return
+		}
+		var f struct{ Name string }
+		json.NewDecoder(r.Body).Decode(&f)
+		mu.Lock()
+		created[f.Name]++
+		n := created[f.Name]
+		mu.Unlock()
+		fmt.Fprintf(w, `{"id":"%s-%d"}`, f.Name, n)
+	}))
+	defer api.Close()
+	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(api.Client()), option.WithEndpoint(api.URL+"/"))
+	rem := &Remote{Folders: map[string]string{"": "root"}}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := rem.ensureFolder(context.Background(), srv, fmt.Sprintf("a/b/c%d", i%4)); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if created["a"] != 1 || created["b"] != 1 || created["c0"] != 1 || len(rem.Folders) != 7 {
+		t.Fatalf("created %v folders %v", created, rem.Folders)
+	}
+}
+
+func TestPacerAdapts(t *testing.T) {
+	p := &pacer{interval: 100 * time.Millisecond, min: 100 * time.Millisecond, max: time.Second, burst: 5, tokens: 5}
+	start := time.Now()
+	for range 5 {
+		p.wait(context.Background())
+	}
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatal("burst should not wait")
+	}
+	p.wait(context.Background())
+	if time.Since(start) < 80*time.Millisecond {
+		t.Fatal("after the burst, calls should be spaced")
+	}
+	p.result(&googleapi.Error{Code: 429})
+	if p.interval != 200*time.Millisecond || p.tokens > 0 {
+		t.Fatalf("after rate limit: %v tokens %v", p.interval, p.tokens)
+	}
+	for range 50 {
+		p.result(nil)
+	}
+	if p.interval != 100*time.Millisecond {
+		t.Fatalf("after successes: %v", p.interval)
+	}
+}
+
+func TestCreateAdoptsExistingID(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error":{"code":409,"message":"A file already exists with the provided ID."}}`))
+			return
+		}
+		w.Write([]byte(`{"id":"gen1","md5Checksum":"abc"}`))
+	}))
+	defer api.Close()
+	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(api.Client()), option.WithEndpoint(api.URL+"/"))
+	_, err := srv.Files.Create(&drive.File{Id: "gen1", Name: "x"}).Do()
+	if !alreadyCreated(err) {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+	f, err := adoptCreated(context.Background(), srv, "gen1", "abc")
+	if err != nil || f.Id != "gen1" {
+		t.Fatalf("adopt: %+v %v", f, err)
+	}
+	if f, err := adoptCreated(context.Background(), srv, "gen1", "different"); !errors.Is(err, errAdoptStale) || f == nil || f.Id != "gen1" {
+		t.Fatalf("stale content must be reported with the file so it can be updated: %+v %v", f, err)
 	}
 }

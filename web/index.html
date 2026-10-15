@@ -33,6 +33,7 @@
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.1M4.5 12h.1M4.5 18h.1"/></symbol>
 </svg>
 
+<div id="channel-banner" class="channel" role="note" hidden></div>
 <header class="top">
   <img src="/logo.png" alt="" width="36" height="36">
   <h1 id="app-name">GoBridgeSync</h1>
@@ -40,6 +41,26 @@
 </header>
 
 <main>
+  <div id="ask-reports" class="alert warn" role="note" hidden>
+    <div>
+      <strong>Help fix problems?</strong>
+      <p>When something goes wrong, GoBridgeSync can send the error and recent log lines to the developer. Only file names are sent, never file contents, folder paths, or passwords.</p>
+      <div class="actions">
+        <button id="reports-yes" type="button" class="small-btn">Send reports</button>
+        <button id="reports-no" type="button" class="secondary small-btn">No thanks</button>
+      </div>
+    </div>
+  </div>
+  <div id="mass-delete" class="alert warn" role="alert" hidden>
+    <svg class="icon alert-icon" aria-hidden="true"><use href="#i-alert"/></svg>
+    <div>
+      <strong id="mass-delete-title"></strong>
+      <p>GoBridgeSync stopped before deleting this many files at once. If you meant to delete them, allow it. If not, put the files back (from your computer's trash or Google Drive's trash), then press Sync now.</p>
+      <div class="actions">
+        <button id="allow-deletes" type="button" class="small-btn">Allow deleting them</button>
+      </div>
+    </div>
+  </div>
   <div id="alert" class="alert" role="alert" hidden>
     <svg class="icon alert-icon" aria-hidden="true"><use href="#i-alert"/></svg>
     <div>
@@ -57,6 +78,7 @@
       <div class="meter" role="progressbar" aria-label="Backup progress" aria-valuemin="0" aria-valuemax="100" id="progress-bar">
         <div id="progress-fill" class="fill"></div>
       </div>
+      <button id="cancel-uploads" type="button" class="secondary small-btn" hidden><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>Cancel these uploads</button>
     </div>
     <p id="error" class="error" role="alert" hidden></p>
     <div class="actions">
@@ -153,9 +175,22 @@
       </label>
 
       <label class="switch">
+        <input id="inbox" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Auto-sort files dropped in <strong>Inbox</strong> into Pictures, Documents, and more</span>
+      </label>
+      <button id="open-inbox" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Open Inbox</button>
+
+      <label class="switch">
         <input id="startup" type="checkbox" role="switch">
         <span class="track" aria-hidden="true"></span>
         <span id="startup-label">Start GoBridgeSync when I sign in</span>
+      </label>
+
+      <label id="reports-row" class="switch">
+        <input id="reports" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Send problem reports to help fix bugs. Only file names are sent, never file contents, folder paths, or passwords.</span>
       </label>
 
       <label class="switch">
@@ -199,6 +234,7 @@
       <h3>Don't back up</h3>
       <p class="muted small">Files or folders to leave out of backup and sync. Pick a folder with the search button, or type a name: <code>*.tmp</code> skips every .tmp file.</p>
       <ul id="excludes" class="folders"></ul>
+      <button id="dev-preset" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add developer folders (node_modules, .venv, build…)</button>
       <form id="exclude-form" class="row">
         <label for="exclude-input" class="sr-only">Pattern or folder to skip</label>
         <input id="exclude-input" type="text" placeholder="*.tmp or a folder" autocomplete="off">

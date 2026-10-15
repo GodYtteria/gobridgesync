@@ -15,7 +15,11 @@ type LocalFile struct {
 
 func scanLocal(root string, ex *excluder) (map[string]LocalFile, error) {
 	out := map[string]LocalFile{}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	return out, walkLocal(root, root, ex, out)
+}
+
+func walkLocal(root, start string, ex *excluder, out map[string]LocalFile) error {
+	return filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -49,5 +53,4 @@ func scanLocal(root string, ex *excluder) (map[string]LocalFile, error) {
 		out[filepath.ToSlash(rel)] = LocalFile{Size: info.Size(), MTime: info.ModTime().UnixNano()}
 		return nil
 	})
-	return out, err
 }

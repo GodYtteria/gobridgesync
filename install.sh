@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repo=${GBS_REPO:-GodYtteria/gobridgesync}
+repo=${GBS_REPO:-GodYtteria/gobridgesync-desktop}
 base=${GBS_BASE_URL:-https://github.com/$repo/releases/latest/download}
 
 fail() {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -26,6 +27,10 @@ func trayFile(name string) []byte {
 	return b
 }
 
+func gnomePanel() bool {
+	return strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "GNOME")
+}
+
 func setTrayIcon(badge string) {
 	active := trayActive(badge)
 	switch runtime.GOOS {
@@ -34,7 +39,11 @@ func setTrayIcon(badge string) {
 	case "darwin":
 		systray.SetTemplateIcon(trayFile("template.png"), trayFile(map[bool]string{true: "color.png", false: "gray.png"}[active]))
 	default:
-		systray.SetIcon(trayFile(map[bool]string{true: "mono-on.png", false: "mono-off.png"}[active]))
+		if gnomePanel() {
+			systray.SetIcon(trayFile(map[bool]string{true: "mono-on.png", false: "mono-off.png"}[active]))
+		} else {
+			systray.SetIcon(trayFile(map[bool]string{true: "color.png", false: "gray.png"}[active]))
+		}
 	}
 }
 
@@ -121,7 +130,9 @@ func runTray(ctx context.Context, quit context.CancelFunc, r *Runner, url string
 		syncNow := systray.AddMenuItem("Back up now", "")
 		openUI := systray.AddMenuItem("Open GoBridgeSync", "")
 		openFolder := systray.AddMenuItem("Open sync folder", "")
+		openInbox := systray.AddMenuItem("Open Inbox", "")
 		openDrive := systray.AddMenuItem("Open Google Drive", "")
+		openLog := systray.AddMenuItem("Open log file", "")
 		systray.AddSeparator()
 		versionItem := systray.AddMenuItem(releaseName()+" "+version, "")
 		versionItem.Disable()
@@ -231,9 +242,15 @@ func runTray(ctx context.Context, quit context.CancelFunc, r *Runner, url string
 					_ = openBrowser(url)
 				case <-editFolders.ClickedCh:
 					_ = openBrowser(url)
+				case <-openInbox.ClickedCh:
+					dir := filepath.Join(r.paths.Root, inboxName)
+					_ = os.MkdirAll(dir, 0o755)
+					_ = openPath(dir)
 				case <-openFolder.ClickedCh:
 					_ = os.MkdirAll(r.paths.Root, 0o755)
 					_ = openPath(r.paths.Root)
+				case <-openLog.ClickedCh:
+					_ = openPath(r.paths.logFile())
 				case <-openDrive.ClickedCh:
 					_ = openBrowser("https://drive.google.com/drive/my-drive")
 				case <-exit.ClickedCh:

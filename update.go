@@ -27,7 +27,7 @@ import (
 var version = "dev"
 
 const (
-	updateRepo       = "GodYtteria/gobridgesync"
+	updateRepo       = "GodYtteria/gobridgesync-desktop"
 	releasePublicKey = "RWRa9VXSkFqxcvPoeZfaYlVJGCZ8hPuCRXqYjgzgMQpnb9tSP8sPjQf6"
 	maxDownload      = 300 << 20
 )
@@ -60,25 +60,42 @@ func newUpdater() *updater {
 }
 
 func parseVersion(v string) ([3]int, bool) {
+	n, _, ok := parseSemver(v)
+	return n, ok
+}
+
+var preLabels = map[string]int{"alpha": 1, "beta": 2, "rc": 3}
+
+func preRank(v string) (int, int) {
+	_, pre, _ := strings.Cut(v, "-")
+	i := len(pre)
+	for i > 0 && pre[i-1] >= '0' && pre[i-1] <= '9' {
+		i--
+	}
+	n, _ := strconv.Atoi(pre[i:])
+	return preLabels[strings.TrimRight(pre[:i], ".")], n
+}
+
+func parseSemver(v string) ([3]int, bool, bool) {
 	var out [3]int
-	v, _, _ = strings.Cut(strings.TrimPrefix(v, "v"), "-")
+	v, pre, hasPre := strings.Cut(strings.TrimPrefix(v, "v"), "-")
 	parts := strings.Split(v, ".")
-	if len(parts) != 3 {
-		return out, false
+	if len(parts) != 3 || (hasPre && pre == "") {
+		return out, false, false
 	}
 	for i, p := range parts {
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
-			return out, false
+			return out, false, false
 		}
 		out[i] = n
 	}
-	return out, true
+	return out, hasPre, true
 }
 
 func newerVersion(latest, current string) bool {
-	l, ok1 := parseVersion(latest)
-	c, ok2 := parseVersion(current)
+	l, lPre, ok1 := parseSemver(latest)
+	c, cPre, ok2 := parseSemver(current)
 	if !ok1 || !ok2 {
 		return false
 	}
@@ -87,7 +104,15 @@ func newerVersion(latest, current string) bool {
 			return l[i] > c[i]
 		}
 	}
-	return false
+	if lPre && cPre {
+		ll, ln := preRank(latest)
+		cl, cn := preRank(current)
+		if ll != cl {
+			return ll > cl
+		}
+		return ln > cn
+	}
+	return cPre && !lPre
 }
 
 func assetName(goos, goarch string) string {
@@ -97,11 +122,32 @@ func assetName(goos, goarch string) string {
 	return appID() + "-" + goos + "-" + goarch + ".tar.gz"
 }
 
-func releaseName() string {
+func buildChannel() string {
+	if _, ok := parseVersion(version); !ok {
+		return "development"
+	}
+	if strings.Contains(version, "-") {
+		return "staging"
+	}
+	return "stable"
+}
+
+func baseName() string {
 	if internalEdition() {
 		return "GoBridgeSync Bukluran"
 	}
 	return "GoBridgeSync"
+}
+
+func releaseName() string {
+	name := baseName()
+	switch buildChannel() {
+	case "staging":
+		return name + " (Staging)"
+	case "development":
+		return name + " (Development)"
+	}
+	return name
 }
 
 func (u *updater) get(ctx context.Context, url string) ([]byte, error) {

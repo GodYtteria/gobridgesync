@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,7 +22,7 @@ const (
 	backupRootName = "GoBridgeSync Backup"
 	saveEvery      = 50
 	maxScanErrors  = 20
-	uploadWorkers  = 4
+	uploadWorkers  = 8
 	uploadChunk    = 4 << 20
 )
 
@@ -66,19 +67,23 @@ type Backup struct {
 	limitPct int
 	progress func(Progress)
 	sizes    func(map[string]FolderSize)
+	pending  func([]string)
+	more     func()
 	quota    func(Quota)
 
-	mu       sync.Mutex
-	folderMu sync.Mutex
-	remote   *Remote
-	prog     Progress
-	index    *driveIndex
-	exclude  *excluder
-	limiter  *limiter
-	resumer  *resumer
+	journal *idJournal
+
+	mu      sync.Mutex
+	remote  *Remote
+	prog    Progress
+	index   *driveIndex
+	exclude *excluder
+	limiter *limiter
+	resumer *resumer
 }
 
 type uploadJob struct {
+	top  string
 	full string
 	rp   string
 	lf   LocalFile
@@ -285,6 +290,7 @@ func (b *Backup) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list drive: %w", err)
 	}
+	remote.journal = b.journal
 	b.remote = remote
 	target := backupTarget()
 	names := backupNames(b.folders)
@@ -325,6 +331,10 @@ func (b *Backup) Run(ctx context.Context) error {
 			full := filepath.Join(dir, filepath.FromSlash(rel))
 			b.report(func(p *Progress) { p.FilesTotal++; p.BytesTotal += lf.Size })
 			job, err := b.plan(full, rp, lf)
+			if job != nil {
+				first, _, _ := strings.Cut(rel, "/")
+				job.top = filepath.Join(dir, filepath.FromSlash(first))
+			}
 			if err != nil {
 				errs = append(errs, fmt.Errorf("check %s: %w", rp, err))
 				continue
@@ -338,6 +348,14 @@ func (b *Backup) Run(ctx context.Context) error {
 	}
 	if b.sizes != nil {
 		b.sizes(sizes)
+	}
+	sort.SliceStable(jobs, func(i, j int) bool { return jobs[i].lf.MTime > jobs[j].lf.MTime })
+	if len(jobs) > uploadsPerPass {
+		jobs = jobs[:uploadsPerPass]
+		complete = false
+		if b.more != nil {
+			b.more()
+		}
 	}
 	q, err := b.readQuota(ctx)
 	if err != nil {
@@ -359,6 +377,14 @@ func (b *Backup) Run(ctx context.Context) error {
 	}
 
 	b.report(func(p *Progress) { p.Phase = "uploading" })
+	if b.pending != nil {
+		tops := make([]string, 0, len(jobs))
+		for _, j := range jobs {
+			tops = append(tops, j.top)
+		}
+		b.pending(tops)
+		defer b.pending(nil)
+	}
 	errs = append(errs, b.uploadAll(ctx, jobs)...)
 	if err := b.stopped(ctx); err != nil {
 		return err
@@ -418,6 +444,10 @@ func (b *Backup) uploadAll(ctx context.Context, jobs []uploadJob) []error {
 			defer wg.Done()
 			for job := range ch {
 				err := retry(ctx, func() error { return b.upload(ctx, job) })
+				if vanished(err, job.full) {
+					log.Printf("upload %s: removed before it could be uploaded; skipped", job.rp)
+					err = nil
+				}
 				emu.Lock()
 				if err != nil {
 					errs = append(errs, fmt.Errorf("upload %s: %w", job.rp, err))
@@ -451,15 +481,7 @@ func (b *Backup) uploadAll(ctx context.Context, jobs []uploadJob) []error {
 }
 
 func (b *Backup) folder(ctx context.Context, dir string) (string, error) {
-	b.folderMu.Lock()
-	defer b.folderMu.Unlock()
-	var id string
-	err := retry(ctx, func() error {
-		var err error
-		id, err = b.remote.ensureFolder(ctx, b.srv, dir)
-		return err
-	})
-	return id, err
+	return b.remote.ensureFolder(ctx, b.srv, dir)
 }
 
 func (b *Backup) upload(ctx context.Context, job uploadJob) error {
@@ -475,13 +497,32 @@ func (b *Backup) upload(ctx context.Context, job uploadJob) error {
 			t.fileID = job.r.ID
 		} else if t.parent, err = b.folder(ctx, path.Dir(job.rp)); err != nil {
 			return err
+		} else if t.newID, err = b.remote.newID(ctx, b.srv, "file:"+job.rp); err != nil {
+			return err
 		}
 		var sent int64
+		if t.parent != "" {
+			meta.Parents = []string{t.parent}
+		}
 		res, err = b.resumer.upload(ctx, t, job.full, job.lf.Size, b.limiter, func(offset int64) {
 			b.report(func(p *Progress) { p.BytesDone += offset - sent })
 			sent = offset
 		})
 		b.report(func(p *Progress) { p.BytesDone -= sent })
+		if alreadyCreated(err) && t.newID != "" {
+			sum, serr := fileMD5(job.full)
+			if serr != nil {
+				return serr
+			}
+			res, err = adoptCreated(ctx, b.srv, t.newID, sum)
+			if errors.Is(err, errAdoptTrashed) {
+				b.journal.drop("file:" + job.rp)
+			}
+			if errors.Is(err, errAdoptStale) {
+				job.r = &RemoteFile{ID: res.Id}
+				return b.upload(ctx, job)
+			}
+		}
 	} else if job.r != nil {
 		f, ferr := os.Open(job.full)
 		if ferr != nil {
@@ -499,9 +540,26 @@ func (b *Backup) upload(ctx context.Context, job uploadJob) error {
 			return ferr
 		}
 		defer f.Close()
-		meta.Name = path.Base(job.rp)
-		meta.Parents = []string{parent}
+		id, ierr := b.remote.newID(ctx, b.srv, "file:"+job.rp)
+		if ierr != nil {
+			return ierr
+		}
+		meta.Id, meta.Name, meta.Parents = id, path.Base(job.rp), []string{parent}
 		res, err = b.srv.Files.Create(meta).Media(limitReader(ctx, f, b.limiter), googleapi.ChunkSize(uploadChunk)).Fields(fileFields).Context(ctx).Do()
+		if alreadyCreated(err) {
+			sum, serr := fileMD5(job.full)
+			if serr != nil {
+				return serr
+			}
+			res, err = adoptCreated(ctx, b.srv, id, sum)
+			if errors.Is(err, errAdoptTrashed) {
+				b.journal.drop("file:" + job.rp)
+			}
+			if errors.Is(err, errAdoptStale) {
+				job.r = &RemoteFile{ID: res.Id}
+				return b.upload(ctx, job)
+			}
+		}
 	}
 	if err != nil {
 		return err
@@ -509,5 +567,10 @@ func (b *Backup) upload(ctx context.Context, job uploadJob) error {
 	b.mu.Lock()
 	b.st.Files[job.rp] = Entry{ID: res.Id, MD5: res.Md5Checksum, Size: job.lf.Size, MTime: job.lf.MTime}
 	b.mu.Unlock()
+	parent := ""
+	if len(meta.Parents) > 0 {
+		parent = meta.Parents[0]
+	}
+	b.index.note(res, path.Base(job.rp), parent)
 	return nil
 }

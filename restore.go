@@ -304,7 +304,7 @@ func restoreOne(ctx context.Context, srv *drive.Service, it restoreItem, dest st
 		}
 		target = free
 	}
-	return true, retry(ctx, func() error {
+	return true, retryRead(ctx, func() error {
 		return downloadFile(ctx, srv, it.id, it.revision, it.sum, it.mtime, target, lim)
 	})
 }

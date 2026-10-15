@@ -28,6 +28,13 @@ bookmarks=$config/gtk-3.0/bookmarks
 if [ -f "$bookmarks" ] && ! grep -q "file://$HOME/$folder " "$bookmarks"; then
 	echo "file://$HOME/$folder $label" >>"$bookmarks"
 fi
+places=$data/user-places.xbel
+href=$(printf 'file://%s/%s' "$HOME" "$folder" | sed 's/%/%25/g; s/ /%20/g; s/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
+if [ -f "$places" ] && ! grep -qF "<ID>$app</ID>" "$places" && ! grep -qF "href=\"file://$HOME/$folder\"" "$places" && ! grep -qF "href=\"$href\"" "$places"; then
+	GBS_PLACE=$(printf ' <bookmark href="%s">\n  <title>%s</title>\n  <info>\n   <metadata owner="http://freedesktop.org">\n    <bookmark:icon name="folder-cloud"/>\n   </metadata>\n   <metadata owner="http://www.kde.org">\n    <ID>%s</ID>\n    <isSystemItem>false</isSystemItem>\n   </metadata>\n  </info>\n </bookmark>' "$href" "$label" "$app") \
+		awk '/<\/xbel>/ && !done { print ENVIRON["GBS_PLACE"]; done = 1 } { print }' "$places" >"$places.tmp" && cat "$places.tmp" >"$places"
+	rm -f "$places.tmp"
+fi
 gtk-update-icon-cache -q "$data/icons/hicolor" 2>/dev/null || true
 pkill -u "$(id -u)" -f "$bin ui" && sleep 2 || true
 nohup "$bin" ui -no-browser -tray >/dev/null 2>&1 &

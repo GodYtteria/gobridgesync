@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 func sampleRemote() *Remote {
@@ -155,5 +160,72 @@ func TestResetAccountState(t *testing.T) {
 	}
 	if err := resetAccountState(p); err != nil {
 		t.Fatal("second reset should be a no-op")
+	}
+}
+
+func TestPauseCancelsRunningPass(t *testing.T) {
+	r := newRunner(Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.passStop = cancel
+	if err := r.SetPaused(true); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("pausing must stop the running pass right away")
+	}
+	if !r.isPaused() {
+		t.Fatal("not paused")
+	}
+}
+
+func TestCancelUploads(t *testing.T) {
+	p := Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir(), Root: t.TempDir()}
+	r := newRunner(p, false)
+	if _, err := r.CancelUploads(); err == nil {
+		t.Fatal("expected error when nothing uploads")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.passStop = cancel
+	big := filepath.Join(p.Root, "SD-Backup")
+	r.setPending([]string{big, big, filepath.Join(p.Root, "notes.txt")})
+	tops, err := r.CancelUploads()
+	if err != nil || len(tops) != 2 || ctx.Err() == nil {
+		t.Fatalf("tops %v err %v stopped %v", tops, err, ctx.Err() != nil)
+	}
+	c, _ := loadAppConfig(p)
+	if len(c.Exclude) != 2 || !newExcluder(c.Exclude).skip(filepath.Join(big, "a/b.txt"), "SD-Backup/a/b.txt") {
+		t.Fatalf("exclude %v", c.Exclude)
+	}
+	if len(r.Snapshot().Pending) != 0 {
+		t.Fatal("pending not cleared")
+	}
+}
+
+func TestTokenRefreshOutlivesPassContext(t *testing.T) {
+	refreshes := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			refreshes++
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"access_token":"new","token_type":"Bearer","expires_in":3600}`))
+			return
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer api.Close()
+	cfg := &oauth2.Config{ClientID: "c", Endpoint: oauth2.Endpoint{TokenURL: api.URL + "/token"}}
+	expired := &oauth2.Token{AccessToken: "old", RefreshToken: "r", Expiry: time.Now().Add(-time.Minute)}
+	long := context.Background()
+	pass, cancel := context.WithCancel(context.Background())
+	client := oauth2.NewClient(context.WithValue(long, oauth2.HTTPClient, api.Client()), cfg.TokenSource(long, expired))
+	cancel()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, api.URL+"/x", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("token refresh failed after a pass ended: %v", err)
+	}
+	resp.Body.Close()
+	if refreshes != 1 || pass.Err() == nil {
+		t.Fatalf("refreshes %d", refreshes)
 	}
 }

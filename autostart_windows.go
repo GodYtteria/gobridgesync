@@ -17,7 +17,7 @@ func setAutostart(on bool) error {
 	}
 	defer k.Close()
 	if !on {
-		if err := k.DeleteValue(releaseName()); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		if err := k.DeleteValue(baseName()); err != nil && !errors.Is(err, registry.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -26,5 +26,5 @@ func setAutostart(on bool) error {
 	if err != nil {
 		return err
 	}
-	return k.SetStringValue(releaseName(), `"`+exe+`" ui -no-browser -tray`)
+	return k.SetStringValue(baseName(), `"`+exe+`" ui -no-browser -tray`)
 }

@@ -2,42 +2,67 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
-	"math"
-	"net/http"
 	"os"
-	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/api/drive/v3"
-	"google.golang.org/api/googleapi"
 )
 
 type Syncer struct {
-	srv      *drive.Service
-	paths    Paths
-	st       *State
-	remote   *Remote
-	force    bool
-	notify   func(string)
-	stop     func() bool
-	progress func(Progress)
-	mu       sync.Mutex
-	index    *driveIndex
-	exclude  *excluder
-	limiter  *limiter
-	resumer  *resumer
+	srv         *drive.Service
+	paths       Paths
+	st          *State
+	remote      *Remote
+	force       bool
+	notify      func(string)
+	stop        func() bool
+	progress    func(Progress)
+	pending     func([]string)
+	more        func()
+	inbox       bool
+	mu          sync.Mutex
+	index       *driveIndex
+	exclude     *excluder
+	limiter     *limiter
+	resumer     *resumer
+	cache       *localCache
+	excludeList []string
+	planTook    time.Duration
+	allow       func(int) bool
+	dirty       bool
+	journal     *idJournal
+	lastLocal   map[string]LocalFile
 }
 
-func (s *Syncer) save() error { return s.st.save(s.paths.state()) }
+func (s *Syncer) save() error {
+	if !s.dirty {
+		return nil
+	}
+	if err := s.st.save(s.paths.state()); err != nil {
+		return err
+	}
+	s.dirty = false
+	return s.journal.prune(func(key string) bool {
+		kind, p, _ := strings.Cut(key, ":")
+		if kind == "folder" {
+			return s.remote != nil && s.remote.Folders[p] != ""
+		}
+		if _, ok := s.st.Files[p]; ok {
+			return true
+		}
+		_, here := s.lastLocal[p]
+		return s.lastLocal != nil && !here
+	})
+}
 
 func (s *Syncer) abs(p string) string { return filepath.Join(s.paths.Root, filepath.FromSlash(p)) }
 
@@ -66,6 +91,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 	} else {
 		excludeBackup(remote)
 	}
+	remote.journal = s.journal
 	s.remote = remote
 	if len(remote.Files) == 0 && len(s.st.Files) > 0 && !s.force {
 		return errors.New("drive listing is empty but state is not; refusing (use -force)")
@@ -73,12 +99,19 @@ func (s *Syncer) Run(ctx context.Context) error {
 	for p := range s.st.Unavailable {
 		if _, ok := remote.Files[p]; !ok {
 			delete(s.st.Unavailable, p)
+			s.dirty = true
 		}
 	}
-	local, err := scanLocal(s.paths.Root, s.exclude)
+	var inboxErrs []error
+	if s.inbox {
+		inboxErrs = s.sortInbox(ctx, remote)
+	}
+	planStart := time.Now()
+	local, err := s.cache.scan(s.paths.Root, s.exclude, s.excludeList, planStart)
 	if err != nil {
 		return fmt.Errorf("scan local: %w", err)
 	}
+	s.lastLocal = local
 
 	all := map[string]bool{}
 	for p := range s.st.Files {
@@ -115,16 +148,26 @@ func (s *Syncer) Run(ctx context.Context) error {
 		}
 		a := decide(b, l, r)
 		plan[p] = a
+		if a != Noop {
+			s.dirty = true
+		}
 		if a == DeleteLocal || a == DeleteRemote {
 			deletes++
 		}
 	}
-	if massDelete(deletes, len(s.st.Files)) && !s.force {
-		return fmt.Errorf("%d deletions out of %d known files; refusing (use -force)", deletes, len(s.st.Files))
+	errs := inboxErrs
+	if massDelete(deletes, len(s.st.Files)) && !s.force && (s.allow == nil || !s.allow(deletes)) {
+		for p, a := range plan {
+			if a == DeleteLocal || a == DeleteRemote {
+				plan[p] = Noop
+			}
+		}
+		errs = append(errs, &massDeleteError{deletes: deletes, known: len(s.st.Files)})
 	}
-
-	var errs []error
 	var downloads []pendingDownload
+	var uploads []pendingUpload
+	var compares []pendingCompare
+	var remoteDeletes []string
 	budget := diskBudget(s.paths.Root)
 	var skipped int
 	var skippedBytes int64
@@ -157,22 +200,63 @@ func (s *Syncer) Run(ctx context.Context) error {
 			}
 			budget -= need
 		}
-		if a != Forget {
-			log.Printf("%s %s", a, p)
-			if s.notify != nil {
-				s.notify(a.String() + " " + p)
+		if a == Download || a == Compare || a == DeleteLocal || a == DeleteRemote {
+			bm, lm, rm := "", "", ""
+			if v, ok := s.st.Files[p]; ok {
+				bm = v.MD5
 			}
+			if v, ok := local[p]; ok {
+				lm = fmt.Sprintf("%d@%d", v.Size, v.MTime)
+			}
+			if v, ok := remote.Files[p]; ok {
+				rm = v.MD5
+			}
+			log.Printf("plan %s %s: known=%s local=%s drive=%s", a, p, bm, lm, rm)
 		}
 		lf := local[p]
 		rf := remote.Files[p]
+		if a == Upload && s.waitForQuiet(p, lf, time.Now()) {
+			continue
+		}
+		if a != Forget && a != Upload && a != Download {
+			s.report(a.String() + " " + p)
+		}
 		if a == Download {
 			downloads = append(downloads, pendingDownload{p, rf})
+			continue
+		}
+		if a == Upload {
+			uploads = append(uploads, pendingUpload{p, rf})
+			continue
+		}
+		if a == Compare {
+			compares = append(compares, pendingCompare{p, lf, rf})
+			continue
+		}
+		if a == DeleteRemote {
+			remoteDeletes = append(remoteDeletes, p)
 			continue
 		}
 		if err := s.apply(ctx, a, p, lf, rf); err != nil {
 			errs = append(errs, fmt.Errorf("%s %s: %w", a, p, err))
 		}
 	}
+	s.planTook = time.Since(planStart)
+	derrs := s.deleteRemoteAll(ctx, remoteDeletes)
+	if slices.ContainsFunc(derrs, func(e error) bool { return errors.Is(e, errPaused) }) {
+		return errPaused
+	}
+	errs = append(errs, derrs...)
+	errs = append(errs, s.trashEmptyFolders(ctx, remote, remoteDeletes)...)
+	conflicts, cerrs := s.compareAll(ctx, compares)
+	errs = append(errs, cerrs...)
+	for _, c := range conflicts {
+		if err := s.apply(ctx, Compare, c.path, c.local, c.remote); err != nil {
+			errs = append(errs, fmt.Errorf("compare %s: %w", c.path, err))
+		}
+	}
+	uploads = s.prioritize(uploads, local)
+	errs = append(errs, s.uploadAll(ctx, uploads)...)
 	errs = append(errs, s.downloadAll(ctx, downloads)...)
 	if skipped > 0 {
 		errs = append(errs, fmt.Errorf("not enough disk space: %d file(s) (%s) not downloaded; free up space on this computer", skipped, humanBytes(skippedBytes)))
@@ -218,172 +302,12 @@ func (s *Syncer) apply(ctx context.Context, a Action, p string, l LocalFile, r R
 	return nil
 }
 
-func conflictName(full string, now time.Time) string {
-	ext := filepath.Ext(full)
-	return strings.TrimSuffix(full, ext) + " (conflict " + now.Format("20060102-150405") + ")" + ext
-}
-
-func (s *Syncer) record(p string, id, sum string) error {
-	info, err := os.Stat(s.abs(p))
-	if err != nil {
-		return err
+func (s *Syncer) report(line string) {
+	if s.notify != nil {
+		s.notify(line)
+		return
 	}
-	s.mu.Lock()
-	s.st.Files[p] = Entry{ID: id, MD5: sum, Size: info.Size(), MTime: info.ModTime().UnixNano()}
-	s.mu.Unlock()
-	return nil
-}
-
-type pendingDownload struct {
-	path string
-	file RemoteFile
-}
-
-func notDownloadable(err error) bool {
-	var g *googleapi.Error
-	if !errors.As(err, &g) || g.Code != http.StatusForbidden {
-		return false
-	}
-	for _, e := range g.Errors {
-		if e.Reason == "cannotDownloadAbusiveFile" || e.Reason == "fileNotDownloadable" || e.Reason == "cannotDownloadFile" {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Syncer) downloadAll(ctx context.Context, jobs []pendingDownload) []error {
-	if len(jobs) == 0 {
-		return nil
-	}
-	var total int64
-	for _, j := range jobs {
-		total += j.file.Size
-	}
-	prog := Progress{Phase: "downloading", FilesTotal: len(jobs), BytesTotal: total}
-	report := func() {
-		if s.progress != nil {
-			s.progress(prog)
-		}
-	}
-	report()
-	ch := make(chan pendingDownload)
-	var wg sync.WaitGroup
-	var errs []error
-	for range uploadWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range ch {
-				if s.notify != nil {
-					s.notify("download " + j.path)
-				}
-				err := retry(ctx, func() error { return s.download(ctx, j.path, j.file) })
-				s.mu.Lock()
-				switch {
-				case notDownloadable(err):
-					s.st.Unavailable[j.path] = j.file.MD5
-					errs = append(errs, fmt.Errorf("download %s: Google does not allow downloading this file; skipped until it changes", j.path))
-				case err != nil:
-					errs = append(errs, fmt.Errorf("download %s: %w", j.path, err))
-				default:
-					delete(s.st.Unavailable, j.path)
-				}
-				prog.FilesDone++
-				prog.BytesDone += j.file.Size
-				if err == nil {
-					prog.Downloaded++
-				}
-				report()
-				s.mu.Unlock()
-			}
-		}()
-	}
-	for _, j := range jobs {
-		if ctx.Err() != nil || (s.stop != nil && s.stop()) {
-			break
-		}
-		ch <- j
-	}
-	close(ch)
-	wg.Wait()
-	return errs
-}
-
-func (s *Syncer) download(ctx context.Context, p string, r RemoteFile) error {
-	if err := downloadFile(ctx, s.srv, r.ID, "", r.MD5, r.MTime, s.abs(p), s.limiter); err != nil {
-		return err
-	}
-	return s.record(p, r.ID, r.MD5)
-}
-
-func (s *Syncer) upload(ctx context.Context, p string, r *RemoteFile) error {
-	full := s.abs(p)
-	if r != nil {
-		sum, err := fileMD5(full)
-		if err != nil {
-			return err
-		}
-		if sum == r.MD5 {
-			return s.record(p, r.ID, r.MD5)
-		}
-	}
-	f, err := os.Open(full)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	meta := &drive.File{ModifiedTime: info.ModTime().UTC().Format(time.RFC3339Nano)}
-	var res *drive.File
-	if s.resumer != nil && info.Size() >= resumableMin {
-		lf := LocalFile{Size: info.Size(), MTime: info.ModTime().UnixNano()}
-		t := uploadTarget{key: "sync:" + sessionKey(p, lf), name: path.Base(p), mtime: info.ModTime()}
-		if r != nil {
-			t.fileID = r.ID
-		} else if t.parent, err = s.remote.ensureFolder(ctx, s.srv, path.Dir(p)); err != nil {
-			return err
-		}
-		res, err = s.resumer.upload(ctx, t, full, info.Size(), s.limiter, nil)
-	} else if r != nil {
-		res, err = s.srv.Files.Update(r.ID, meta).Media(limitReader(ctx, f, s.limiter), googleapi.ChunkSize(uploadChunk)).Fields(fileFields).Context(ctx).Do()
-	} else {
-		parent, perr := s.remote.ensureFolder(ctx, s.srv, path.Dir(p))
-		if perr != nil {
-			return perr
-		}
-		meta.Name = path.Base(p)
-		meta.Parents = []string{parent}
-		res, err = s.srv.Files.Create(meta).Media(limitReader(ctx, f, s.limiter), googleapi.ChunkSize(uploadChunk)).Fields(fileFields).Context(ctx).Do()
-	}
-	if err != nil {
-		return err
-	}
-	s.st.Files[p] = Entry{ID: res.Id, MD5: res.Md5Checksum, Size: info.Size(), MTime: info.ModTime().UnixNano()}
-	return nil
-}
-
-func (r *Remote) ensureFolder(ctx context.Context, srv *drive.Service, dir string) (string, error) {
-	if dir == "." {
-		dir = ""
-	}
-	if id, ok := r.Folders[dir]; ok {
-		return id, nil
-	}
-	parent, err := r.ensureFolder(ctx, srv, path.Dir(dir))
-	if err != nil {
-		return "", err
-	}
-	f, err := srv.Files.Create(&drive.File{Name: path.Base(dir), MimeType: folderMime, Parents: []string{parent}}).
-		Fields("id").Context(ctx).Do()
-	if err != nil {
-		return "", err
-	}
-	r.Folders[dir] = f.Id
-	return f.Id, nil
+	log.Print(line)
 }
 
 func (s *Syncer) deleteLocal(p string) error {
@@ -396,55 +320,6 @@ func (s *Syncer) deleteLocal(p string) error {
 	}
 	delete(s.st.Files, p)
 	return nil
-}
-
-func (s *Syncer) deleteRemote(ctx context.Context, p string) error {
-	_, err := s.srv.Files.Update(s.st.Files[p].ID, &drive.File{Trashed: true}).Fields("id").Context(ctx).Do()
-	var gerr *googleapi.Error
-	if err != nil && !(errors.As(err, &gerr) && gerr.Code == http.StatusNotFound) {
-		return err
-	}
-	delete(s.st.Files, p)
-	return nil
-}
-
-func (s *Syncer) syncLinks() error {
-	var errs []error
-	for p, d := range s.remote.Docs {
-		b, err := json.Marshal(map[string]string{"url": d.URL, "doc_id": d.ID})
-		if err != nil {
-			return err
-		}
-		full := s.abs(p)
-		if cur, err := os.ReadFile(full); err != nil || string(cur) != string(b) {
-			if err := writeFileAtomic(full, b, 0o644); err != nil {
-				errs = append(errs, fmt.Errorf("link %s: %w", p, err))
-				continue
-			}
-		}
-		s.st.Links[p] = d.ID
-	}
-	for p := range s.st.Links {
-		if _, ok := s.remote.Docs[p]; ok || s.remote.blocked(p) {
-			continue
-		}
-		if err := os.Remove(s.abs(p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("link %s: %w", p, err))
-			continue
-		}
-		delete(s.st.Links, p)
-	}
-	return errors.Join(errs...)
-}
-
-const diskReserve = 2 << 30
-
-func diskBudget(dir string) int64 {
-	free, err := freeSpace(dir)
-	if err != nil {
-		return math.MaxInt64
-	}
-	return max(free-diskReserve, 0)
 }
 
 func excludeBackup(r *Remote) {

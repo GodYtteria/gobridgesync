@@ -5,12 +5,24 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+var developerSkips = []string{
+	"node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+	".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+	"dist", "build", "target", ".gradle", "*.pyc", "*.o", "*.class",
+}
+
+const excludeMemoMax = 1 << 20
 
 type excluder struct {
 	abs   []string
 	rel   []string
 	names []string
+
+	mu   sync.Mutex
+	memo map[string]bool
 }
 
 func normalizeExcludes(in []string) ([]string, error) {
@@ -63,15 +75,33 @@ func (x *excluder) skip(full, rel string) bool {
 	if x == nil {
 		return false
 	}
+	x.mu.Lock()
+	hit, ok := x.memo[full]
+	x.mu.Unlock()
+	if ok {
+		return hit
+	}
+	hit = x.match(full, rel)
+	x.mu.Lock()
+	if x.memo == nil || len(x.memo) >= excludeMemoMax {
+		x.memo = map[string]bool{}
+	}
+	x.memo[full] = hit
+	x.mu.Unlock()
+	return hit
+}
+
+func (x *excluder) match(full, rel string) bool {
 	for _, a := range x.abs {
 		if within(foldKey(full), foldKey(a)) {
 			return true
 		}
 	}
-	name := path.Base(rel)
-	for _, n := range x.names {
-		if ok, _ := path.Match(n, name); ok {
-			return true
+	for _, part := range strings.Split(rel, "/") {
+		for _, n := range x.names {
+			if ok, _ := path.Match(n, part); ok {
+				return true
+			}
 		}
 	}
 	for _, r := range x.rel {

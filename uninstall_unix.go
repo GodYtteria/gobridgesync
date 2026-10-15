@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ func removeShortcuts() []error {
 	if cfg, err := os.UserConfigDir(); err == nil {
 		errs = append(errs, removeBookmark(filepath.Join(cfg, "gtk-3.0", "bookmarks"), defaultPathsRoot()))
 	}
+	errs = append(errs, removePlace(filepath.Join(data, "user-places.xbel"), appID(), defaultPathsRoot()))
 	return errs
 }
 
@@ -84,4 +86,40 @@ func defaultPathsRoot() string {
 		return "GoBridgeSync"
 	}
 	return p.Root
+}
+
+func removePlace(file, id, root string) error {
+	b, err := os.ReadFile(file)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s := string(b)
+	start := -1
+	if at := strings.Index(s, "<ID>"+id+"</ID>"); at >= 0 {
+		start = strings.LastIndex(s[:at], "<bookmark ")
+	}
+	if start < 0 {
+		start = strings.Index(s, `<bookmark href="file://`+root+`"`)
+	}
+	if start < 0 {
+		start = strings.Index(s, `<bookmark href="`+strings.ReplaceAll((&url.URL{Scheme: "file", Path: root}).String(), "&", "&amp;")+`"`)
+	}
+	if start < 0 {
+		return nil
+	}
+	end := strings.Index(s[start:], "</bookmark>")
+	if end < 0 {
+		return nil
+	}
+	end += start + len("</bookmark>")
+	if end < len(s) && s[end] == '\n' {
+		end++
+	}
+	for start > 0 && s[start-1] == ' ' {
+		start--
+	}
+	return writeFileAtomic(file, []byte(s[:start]+s[end:]), 0o644)
 }

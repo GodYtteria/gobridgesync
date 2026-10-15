@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
+	"maps"
+	"net/http"
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 )
 
 const (
@@ -53,9 +58,93 @@ type Remote struct {
 	Docs      map[string]RemoteDoc
 	Folders   map[string]string
 	Ambiguous map[string]bool
+
+	mu      sync.Mutex
+	pending map[string]*folderCall
+	ids     []string
+	idFor   map[string]string
+	journal *idJournal
+}
+
+func (r *Remote) clone() *Remote {
+	return &Remote{Files: maps.Clone(r.Files), Docs: maps.Clone(r.Docs), Folders: maps.Clone(r.Folders), Ambiguous: maps.Clone(r.Ambiguous)}
+}
+
+const idBatch = 100
+
+func (r *Remote) newID(ctx context.Context, srv *drive.Service, key string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if id, ok := r.idFor[key]; ok {
+		return id, nil
+	}
+	if id, ok := r.journal.get(key); ok {
+		if r.idFor == nil {
+			r.idFor = map[string]string{}
+		}
+		r.idFor[key] = id
+		return id, nil
+	}
+	if len(r.ids) == 0 {
+		var res *drive.GeneratedIds
+		err := retry(ctx, func() error {
+			var err error
+			res, err = srv.Files.GenerateIds().Count(idBatch).Space("drive").Context(ctx).Do()
+			return err
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(res.Ids) == 0 {
+			return "", errors.New("Google Drive returned no file ids")
+		}
+		r.ids = res.Ids
+	}
+	if r.idFor == nil {
+		r.idFor = map[string]string{}
+	}
+	id := r.ids[len(r.ids)-1]
+	r.ids = r.ids[:len(r.ids)-1]
+	r.idFor[key] = id
+	if err := r.journal.put(key, id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func alreadyCreated(err error) bool {
+	var g *googleapi.Error
+	return errors.As(err, &g) && g.Code == http.StatusConflict
+}
+
+var errAdoptStale = errors.New("the file was created earlier with older content")
+
+var errAdoptTrashed = errors.New("the file was created earlier but is now in the trash; it will be uploaded again")
+
+func adoptCreated(ctx context.Context, srv *drive.Service, id, wantMD5 string) (*drive.File, error) {
+	f, err := srv.Files.Get(id).Fields(fileFields + ",trashed").Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	if f.Trashed {
+		return nil, errAdoptTrashed
+	}
+	if wantMD5 != "" && f.Md5Checksum != wantMD5 {
+		return f, errAdoptStale
+	}
+	return f, nil
+}
+
+type folderCall struct {
+	done chan struct{}
+	id   string
+	err  error
 }
 
 func (r *Remote) blocked(p string) bool {
+	if len(r.Ambiguous) == 0 {
+		return false
+	}
 	for q := p; q != "." && q != ""; q = path.Dir(q) {
 		if r.Ambiguous[foldKey(q)] {
 			return true

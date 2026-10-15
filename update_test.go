@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,14 +21,17 @@ import (
 
 func TestNewerVersion(t *testing.T) {
 	cases := map[[2]string]bool{
-		{"v0.2.0", "v0.1.9"}:     true,
-		{"v1.0.0", "v0.9.9"}:     true,
-		{"v0.1.0", "v0.1.0"}:     false,
-		{"v0.1.0", "v0.2.0"}:     false,
-		{"v0.10.0", "v0.9.0"}:    true,
-		{"v0.2.0", "dev"}:        false,
-		{"junk", "v0.1.0"}:       false,
-		{"v0.2.0-rc1", "v0.1.0"}: true,
+		{"v0.2.0", "v0.1.9"}:         true,
+		{"v1.0.0", "v0.9.9"}:         true,
+		{"v0.1.0", "v0.1.0"}:         false,
+		{"v0.1.0", "v0.2.0"}:         false,
+		{"v0.10.0", "v0.9.0"}:        true,
+		{"v0.2.0", "dev"}:            false,
+		{"junk", "v0.1.0"}:           false,
+		{"v0.2.0-rc1", "v0.1.0"}:     true,
+		{"v0.2.4", "v0.2.4-rc1"}:     true,
+		{"v0.2.4-rc2", "v0.2.4"}:     false,
+		{"v0.2.4-rc1", "v0.2.4-rc1"}: false,
 	}
 	for in, want := range cases {
 		if got := newerVersion(in[0], in[1]); got != want {
@@ -110,5 +114,58 @@ func TestReplaceExecutable(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(exe); string(b) != "new" {
 		t.Fatalf("got %q", b)
+	}
+}
+
+func TestBuildChannel(t *testing.T) {
+	old := version
+	defer func() { version = old }()
+	for v, want := range map[string]string{"v0.2.3": "stable", "v0.2.4-rc1": "staging", "dev": "development", "f35e093-dirty": "development"} {
+		version = v
+		if got := buildChannel(); got != want {
+			t.Errorf("%s: got %s want %s", v, got, want)
+		}
+	}
+	version = "v0.2.4-rc1"
+	if releaseName() != "GoBridgeSync (Staging)" {
+		t.Fatalf("got %q", releaseName())
+	}
+}
+
+func TestHTTP1TransportTalksToHTTP2Server(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.Proto))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	tr := http1Transport()
+	tr.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	resp, err := (&http.Client{Transport: tr}).Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if string(b) != "HTTP/1.1" {
+		t.Fatalf("got %s", b)
+	}
+}
+
+func TestNewerVersionPrereleaseLabels(t *testing.T) {
+	cases := []struct {
+		latest, current string
+		want            bool
+	}{
+		{"v0.3.0-rc1", "v0.3.0-beta2", true},
+		{"v0.3.0-beta2", "v0.3.0-rc1", false},
+		{"v0.2.4-rc10", "v0.2.4-rc9", true},
+		{"v0.2.4", "v0.2.4-rc30", true},
+		{"v0.2.3", "v0.2.4-rc30", false},
+	}
+	for _, c := range cases {
+		if got := newerVersion(c.latest, c.current); got != c.want {
+			t.Errorf("newerVersion(%s, %s) = %v", c.latest, c.current, got)
+		}
 	}
 }

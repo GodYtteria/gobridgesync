@@ -158,3 +158,6 @@ footer { max-width: 920px; margin: 0 auto; padding: 4px 16px 28px; color: var(--
 .chips button { padding: 4px 10px; font-size: 0.85rem; border-radius: 999px; }
 .folders .meta { color: var(--muted); font-size: 0.8rem; }
 button.busy { animation: pulse 1s ease-in-out infinite; }
+.channel { background: repeating-linear-gradient(135deg, #f59e0b 0 14px, #fbbf24 14px 28px); color: #1c1917; font-weight: 700; text-align: center; padding: 6px 12px; font-size: 0.85rem; letter-spacing: 0.03em; }
+#cancel-uploads { margin-top: 10px; }
+#open-inbox, #dev-preset { margin: 0 0 12px; }

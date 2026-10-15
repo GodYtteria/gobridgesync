@@ -94,7 +94,12 @@ function hintFor(msg) {
 }
 
 function renderAlert(s) {
-  const issues = s.issues || [];
+  const n = s.pendingDeletes || 0;
+  $("mass-delete").hidden = n === 0;
+  if (n) {
+    $("mass-delete-title").textContent = n.toLocaleString() + " files are about to be deleted";
+  }
+  const issues = (s.issues || []).filter((i) => !/waiting for you to allow it$/.test(i.message));
   const q = s.quota;
   const box = $("alert");
   if (s.state === "error" && issues.length) {
@@ -112,6 +117,34 @@ function renderAlert(s) {
   } else {
     box.hidden = true;
   }
+}
+
+const samples = [];
+
+function eta(p) {
+  const now = Date.now();
+  if (samples.length && (samples[samples.length - 1].phase !== p.phase || samples[samples.length - 1].files > p.filesDone || samples[samples.length - 1].bytes > p.bytesDone)) {
+    samples.length = 0;
+  }
+  samples.push({ t: now, bytes: p.bytesDone, files: p.filesDone, phase: p.phase });
+  while (samples.length > 2 && now - samples[0].t > 120000) {
+    samples.shift();
+  }
+  const first = samples[0];
+  const secs = (now - first.t) / 1000;
+  if (secs < 10) {
+    return "";
+  }
+  const byteRate = (p.bytesDone - first.bytes) / secs;
+  const fileRate = (p.filesDone - first.files) / secs;
+  const left = [];
+  if (byteRate > 0) left.push((p.bytesTotal - p.bytesDone) / byteRate);
+  if (fileRate > 0) left.push((p.filesTotal - p.filesDone) / fileRate);
+  if (!left.length) {
+    return "";
+  }
+  const remaining = Math.max(...left);
+  return " · " + bytes(byteRate) + "/s · about " + duration(remaining) + " left";
 }
 
 function renderStats(s) {
@@ -133,12 +166,13 @@ function renderStats(s) {
   }
   const p = s.progress || {};
   const active = s.state === "syncing" && p.phase;
+  $("cancel-uploads").hidden = !(active && p.phase === "uploading" && (s.pending || []).length);
   $("progress-box").hidden = !active;
   if (active) {
     const pct = p.bytesTotal ? (p.bytesDone / p.bytesTotal) * 100 : 0;
     meter($("progress-bar"), $("progress-fill"), pct);
     $("progress-phase").textContent = { checking: "Checking files…", uploading: "Uploading…", downloading: "Downloading from Drive…", restoring: "Restoring…" }[p.phase] || "Working…";
-    $("progress-text").textContent = p.filesDone + " / " + p.filesTotal + " files · " + bytes(p.bytesDone) + " / " + bytes(p.bytesTotal);
+    $("progress-text").textContent = p.filesDone.toLocaleString() + " / " + p.filesTotal.toLocaleString() + " files · " + bytes(p.bytesDone) + " / " + bytes(p.bytesTotal) + eta(p);
   }
   const r = s.lastRun;
   if (r) {
@@ -194,8 +228,19 @@ function render(s) {
   $("twoway").checked = s.twoWay;
   $("startup").checked = s.startAtLogin;
   $("autoupdate").checked = s.autoUpdate;
+  $("reports-row").hidden = !s.reportsAvailable;
+  $("reports").checked = s.sendReports;
+  $("ask-reports").hidden = !(s.askReports && (s.issues || []).length);
+  $("inbox").checked = s.autoSortInbox;
+  $("inbox").disabled = !s.twoWay;
+  $("open-inbox").hidden = !s.twoWay;
   $("version").textContent = s.version;
   $("app-name").textContent = s.appName;
+  const testBuild = s.channel === "staging" || s.channel === "development";
+  $("channel-banner").hidden = !testBuild;
+  if (testBuild) {
+    $("channel-banner").textContent = (s.channel === "staging" ? "STAGING BUILD " : "DEVELOPMENT BUILD ") + s.version + " · for testing only";
+  }
   $("footer-name").textContent = s.appName;
   document.title = s.appName;
   $("update").hidden = !s.updateAvailable;
@@ -438,6 +483,16 @@ $("signout").addEventListener("click", () => {
   }
 });
 $("autoupdate").addEventListener("change", (e) => saveSettings({ autoUpdate: e.target.checked }));
+$("reports").addEventListener("change", (e) => saveSettings({ sendReports: e.target.checked }));
+$("reports-yes").addEventListener("click", () => saveSettings({ sendReports: true }));
+$("reports-no").addEventListener("click", () => saveSettings({ sendReports: false }));
+$("inbox").addEventListener("change", (e) => saveSettings({ autoSortInbox: e.target.checked }));
+$("open-inbox").addEventListener("click", () => act("/api/open-inbox"));
+$("allow-deletes").addEventListener("click", () => {
+  $("mass-delete").hidden = true;
+  act("/api/allow-deletes");
+});
+$("dev-preset").addEventListener("click", () => act("/api/exclude-preset"));
 $("update").addEventListener("click", () => act("/api/update"));
 $("every").addEventListener("change", (e) => saveSettings({ intervalMinutes: Number(e.target.value) }));
 $("twoway").addEventListener("change", (e) => {
@@ -550,6 +605,14 @@ $("restore-open").addEventListener("click", () => {
 $("restore-up").addEventListener("click", () => browseRemote(remotePath.includes("/") ? remotePath.slice(0, remotePath.lastIndexOf("/")) : ""));
 $("restore-here").addEventListener("click", () => startRestore({ source: remotePath }));
 $("restore-close").addEventListener("click", () => $("restore").close());
+$("cancel-uploads").addEventListener("click", () => {
+  const items = (current && current.pending) || [];
+  const extra = ((current && current.pendingCount) || items.length) - items.length;
+  const list = items.map((p) => "  • " + short(p)).join("\n") + (extra > 0 ? "\n  • …and " + extra + " more" : "");
+  if (window.confirm("Stop these uploads and add them to Don't back up?\n\n" + list + "\n\nNothing is deleted. Remove them from Don't back up later to upload them again.")) {
+    act("/api/cancel");
+  }
+});
 $("clear-issues").addEventListener("click", () => act("/api/clear-issues"));
 $("sync").addEventListener("click", () => act("/api/sync"));
 $("open").addEventListener("click", () => act("/api/open-folder"));

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -183,6 +184,20 @@ func tokenSource(ctx context.Context, p Paths) (oauth2.TokenSource, error) {
 	return &savingSource{base: cfg.TokenSource(ctx, tok), last: tok.AccessToken, p: p}, nil
 }
 
+func http1Transport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           stallDial((&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext, connReadStall, connWriteStall),
+		TLSClientConfig:       &tls.Config{NextProtos: []string{"http/1.1"}},
+		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   32,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+}
+
 func newService(ctx context.Context, p Paths) (*drive.Service, error) {
 	srv, _, err := connect(ctx, p)
 	return srv, err
@@ -193,7 +208,7 @@ func connect(ctx context.Context, p Paths) (*drive.Service, *http.Client, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	client := oauth2.NewClient(ctx, ts)
+	client := oauth2.NewClient(context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: http1Transport()}), ts)
 	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, nil, err

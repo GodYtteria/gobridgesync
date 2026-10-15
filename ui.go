@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +44,8 @@ type ui struct {
 	token  string
 	ctx    context.Context
 }
+
+const gcPercent = 200
 
 func serveUI(ctx context.Context, paths Paths, force bool, addr string, browser, tray bool) error {
 	host, _, err := net.SplitHostPort(addr)
@@ -73,6 +76,8 @@ func serveUI(ctx context.Context, paths Paths, force bool, addr string, browser,
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	startLogFile(paths)
+	debug.SetGCPercent(gcPercent)
 	cleanupOldExecutable()
 	u := &ui{runner: newRunner(paths, force), paths: paths, addr: addr, token: hex.EncodeToString(buf), ctx: ctx}
 	srv := &http.Server{Handler: u.routes(), ReadHeaderTimeout: 10 * time.Second}
@@ -170,13 +175,39 @@ func (u *ui) routes() http.Handler {
 		return u.runner.QueueRestore(job)
 	}))
 	mux.HandleFunc("POST /api/signout", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.SignOut(r.Context()) }))
+	mux.HandleFunc("POST /api/cancel", u.post(func(w http.ResponseWriter, r *http.Request) error {
+		_, err := u.runner.CancelUploads()
+		return err
+	}))
 	mux.HandleFunc("POST /api/update", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.ApplyUpdate(u.ctx) }))
 	mux.HandleFunc("POST /api/dirs", u.dirs)
 	mux.HandleFunc("POST /api/clear-issues", u.post(func(w http.ResponseWriter, r *http.Request) error { u.runner.ClearIssues(); return nil }))
 	mux.HandleFunc("POST /api/login", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.Login(u.ctx, "http://"+u.addr+"/") }))
 	mux.HandleFunc("POST /api/sync", u.post(func(w http.ResponseWriter, r *http.Request) error { u.runner.Trigger(); return nil }))
+	mux.HandleFunc("POST /api/allow-deletes", u.post(func(w http.ResponseWriter, r *http.Request) error { u.runner.AllowDeletes(); return nil }))
 	mux.HandleFunc("POST /api/pause", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.SetPaused(true) }))
 	mux.HandleFunc("POST /api/resume", u.post(func(w http.ResponseWriter, r *http.Request) error { return u.runner.SetPaused(false) }))
+	mux.HandleFunc("POST /api/open-inbox", u.post(func(w http.ResponseWriter, r *http.Request) error {
+		dir := filepath.Join(u.paths.Root, inboxName)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		return openPath(dir)
+	}))
+	mux.HandleFunc("POST /api/exclude-preset", u.post(func(w http.ResponseWriter, r *http.Request) error {
+		_, err := editConfig(u.paths, func(c *AppConfig) error {
+			next, err := normalizeExcludes(append(append([]string{}, c.Exclude...), developerSkips...))
+			if err != nil {
+				return err
+			}
+			c.Exclude = next
+			return nil
+		})
+		if err == nil {
+			u.runner.addRecent("added developer folders to Don't back up")
+		}
+		return err
+	}))
 	mux.HandleFunc("POST /api/open-folder", u.post(func(w http.ResponseWriter, r *http.Request) error {
 		if err := os.MkdirAll(u.paths.Root, 0o755); err != nil {
 			return err
@@ -278,6 +309,8 @@ type settingsInput struct {
 	Updates *bool     `json:"autoUpdate"`
 	Exclude *[]string `json:"exclude"`
 	Speed   *int      `json:"speedLimitKB"`
+	Inbox   *bool     `json:"autoSortInbox"`
+	Reports *bool     `json:"sendReports"`
 }
 
 func applySettings(cfg AppConfig, in settingsInput, syncRoot string) (AppConfig, error) {
@@ -309,6 +342,12 @@ func applySettings(cfg AppConfig, in settingsInput, syncRoot string) (AppConfig,
 	}
 	if in.Updates != nil {
 		cfg.Updates = in.Updates
+	}
+	if in.Inbox != nil {
+		cfg.Inbox = in.Inbox
+	}
+	if in.Reports != nil {
+		cfg.Reports = in.Reports
 	}
 	if in.Speed != nil {
 		if !speedLimits[*in.Speed] {

@@ -1,0 +1,45 @@
+name: Staging build
+
+on:
+  push:
+    tags: ["v*-rc*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'GodYtteria/gobridgesync-desktop-staging'
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            targets: linux/amd64 linux/arm64 windows/amd64 windows/arm64
+          - runner: macos-latest
+            targets: darwin/amd64 darwin/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: ./build.sh ${{ matrix.targets }}
+        env:
+          VERSION: ${{ github.ref_name }}
+      - run: ./build.sh ${{ matrix.targets }}
+        env:
+          VERSION: ${{ github.ref_name }}
+          EDITION: internal
+          GBS_CLIENT: ${{ secrets.GBS_BUKLURAN_CLIENT }}
+      - name: Checksums
+        working-directory: dist
+        run: shasum -a 256 $(ls *.tar.gz *.zip 2>/dev/null) > checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-${{ github.ref_name }}-${{ matrix.runner }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          retention-days: 30

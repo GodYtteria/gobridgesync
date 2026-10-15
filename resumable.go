@@ -98,6 +98,7 @@ type resumer struct {
 type uploadTarget struct {
 	key    string
 	fileID string
+	newID  string
 	name   string
 	parent string
 	mtime  time.Time
@@ -114,6 +115,9 @@ func (r *resumer) start(ctx context.Context, t uploadTarget, size int64) (string
 		method, u = http.MethodPatch, r.endpoint+"/"+url.PathEscape(t.fileID)
 	} else {
 		meta["name"], meta["parents"] = t.name, []string{t.parent}
+		if t.newID != "" {
+			meta["id"] = t.newID
+		}
 	}
 	body, err := json.Marshal(meta)
 	if err != nil {

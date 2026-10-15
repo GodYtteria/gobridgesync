@@ -22,6 +22,8 @@ type AppConfig struct {
 	Updates *bool    `json:"autoUpdate,omitempty"`
 	Exclude []string `json:"exclude"`
 	Speed   int      `json:"speedLimitKB"`
+	Inbox   *bool    `json:"autoSortInbox,omitempty"`
+	Reports *bool    `json:"sendReports,omitempty"`
 	Version int      `json:"configVersion"`
 }
 
@@ -77,6 +79,17 @@ func (c AppConfig) every() int {
 func (c AppConfig) startAtLogin() bool { return c.Startup == nil || *c.Startup }
 
 func (c AppConfig) autoUpdate() bool { return c.Updates == nil || *c.Updates }
+
+func (c AppConfig) sendReports() bool {
+	if c.Reports != nil {
+		return *c.Reports
+	}
+	return internalEdition()
+}
+
+func (c AppConfig) reportsUndecided() bool { return c.Reports == nil && !internalEdition() }
+
+func (c AppConfig) inboxSort() bool { return c.TwoWay && (c.Inbox == nil || *c.Inbox) }
 
 const defaultStorageLimit = 90
 

@@ -70,6 +70,11 @@ func (s *Syncer) Run(ctx context.Context) error {
 	if len(remote.Files) == 0 && len(s.st.Files) > 0 && !s.force {
 		return errors.New("drive listing is empty but state is not; refusing (use -force)")
 	}
+	for p := range s.st.Unavailable {
+		if _, ok := remote.Files[p]; !ok {
+			delete(s.st.Unavailable, p)
+		}
+	}
 	local, err := scanLocal(s.paths.Root, s.exclude)
 	if err != nil {
 		return fmt.Errorf("scan local: %w", err)
@@ -134,6 +139,15 @@ func (s *Syncer) Run(ctx context.Context) error {
 		if a == Noop {
 			continue
 		}
+		if a == Download && remote.Files[p].MD5 != "" && s.st.Unavailable[p] == remote.Files[p].MD5 {
+			continue
+		}
+		if a == Download {
+			if info, err := os.Stat(s.abs(p)); err == nil && info.IsDir() {
+				errs = append(errs, fmt.Errorf("download %s: a folder with the same name exists on this computer; rename one of them", p))
+				continue
+			}
+		}
 		if a == Download || a == Compare {
 			need := remote.Files[p].Size
 			if need > budget {
@@ -152,9 +166,6 @@ func (s *Syncer) Run(ctx context.Context) error {
 		lf := local[p]
 		rf := remote.Files[p]
 		if a == Download {
-			if s.st.Unavailable[p] == rf.MD5 && rf.MD5 != "" {
-				continue
-			}
 			downloads = append(downloads, pendingDownload{p, rf})
 			continue
 		}
@@ -281,7 +292,7 @@ func (s *Syncer) downloadAll(ctx context.Context, jobs []pendingDownload) []erro
 				prog.FilesDone++
 				prog.BytesDone += j.file.Size
 				if err == nil {
-					prog.Uploaded++
+					prog.Downloaded++
 				}
 				report()
 				s.mu.Unlock()

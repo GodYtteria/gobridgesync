@@ -248,7 +248,7 @@ func TestSyncerDownloadAll(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(root, "d", "b.txt")); string(b) != "two" || st.Files["a.txt"].MD5 == "" {
 		t.Fatal("good files not downloaded or recorded")
 	}
-	if last.FilesDone != 3 || last.Uploaded != 2 || last.Phase != "downloading" {
+	if last.FilesDone != 3 || last.Downloaded != 2 || last.Uploaded != 0 || last.Phase != "downloading" {
 		t.Fatalf("progress %+v", last)
 	}
 }

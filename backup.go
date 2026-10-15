@@ -30,6 +30,7 @@ var errPaused = errors.New("paused")
 type Progress struct {
 	Phase      string `json:"phase"`
 	Uploaded   int    `json:"uploaded"`
+	Downloaded int    `json:"downloaded"`
 	FilesDone  int    `json:"filesDone"`
 	FilesTotal int    `json:"filesTotal"`
 	BytesDone  int64  `json:"bytesDone"`

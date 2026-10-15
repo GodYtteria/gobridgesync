@@ -144,7 +144,7 @@ function renderStats(s) {
   if (r) {
     $("stat-finished").textContent = when(r.finished);
     $("stat-duration").textContent = duration(r.seconds);
-    $("stat-uploaded").textContent = r.uploaded + " files";
+    $("stat-uploaded").textContent = r.downloaded ? r.uploaded + " up · " + r.downloaded + " down" : r.uploaded + " files";
     $("stat-files").textContent = String(r.files);
     $("stat-bytes").textContent = bytes(r.bytes);
     $("stat-errors").textContent = String(r.errors);

@@ -58,13 +58,14 @@ type Status struct {
 }
 
 type RunStats struct {
-	Started  time.Time `json:"started"`
-	Finished time.Time `json:"finished"`
-	Seconds  float64   `json:"seconds"`
-	Uploaded int       `json:"uploaded"`
-	Files    int       `json:"files"`
-	Bytes    int64     `json:"bytes"`
-	Errors   int       `json:"errors"`
+	Started    time.Time `json:"started"`
+	Finished   time.Time `json:"finished"`
+	Seconds    float64   `json:"seconds"`
+	Uploaded   int       `json:"uploaded"`
+	Downloaded int       `json:"downloaded"`
+	Files      int       `json:"files"`
+	Bytes      int64     `json:"bytes"`
+	Errors     int       `json:"errors"`
 }
 
 type Issue struct {
@@ -403,7 +404,7 @@ func (r *Runner) Loop(ctx context.Context) {
 				now := time.Now()
 				st.LastRun = &RunStats{
 					Started: started, Finished: now, Seconds: now.Sub(started).Seconds(),
-					Uploaded: st.Progress.Uploaded, Files: st.Progress.FilesTotal, Bytes: st.Progress.BytesTotal, Errors: len(issues),
+					Uploaded: st.Progress.Uploaded, Downloaded: st.Progress.Downloaded, Files: st.Progress.FilesTotal, Bytes: st.Progress.BytesTotal, Errors: len(issues),
 				}
 				st.Issues = mergeIssues(st.Issues, issues, now)
 				if len(st.Issues) > issueLimit {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/fs"
+	"log"
 	"path/filepath"
 	"strings"
 )
@@ -14,14 +15,30 @@ type LocalFile struct {
 }
 
 func scanLocal(root string, ex *excluder) (map[string]LocalFile, error) {
-	out := map[string]LocalFile{}
-	return out, walkLocal(root, root, ex, out)
+	out, _, err := scanLocalSkipping(root, ex)
+	return out, err
 }
 
-func walkLocal(root, start string, ex *excluder, out map[string]LocalFile) error {
+func scanLocalSkipping(root string, ex *excluder) (map[string]LocalFile, []string, error) {
+	out := map[string]LocalFile{}
+	var skipped []string
+	err := walkLocal(root, root, ex, out, &skipped)
+	return out, skipped, err
+}
+
+func walkLocal(root, start string, ex *excluder, out map[string]LocalFile, skipped *[]string) error {
 	return filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if p == root || d == nil || !d.IsDir() {
+				return err
+			}
+			rel, rerr := filepath.Rel(root, p)
+			if rerr != nil {
+				return err
+			}
+			log.Printf("scan %s: cannot read folder, skipped this time: %v", rel, err)
+			*skipped = append(*skipped, filepath.ToSlash(rel))
+			return filepath.SkipDir
 		}
 		if p == root {
 			return nil

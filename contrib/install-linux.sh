@@ -35,6 +35,7 @@ if [ -f "$places" ] && ! grep -qF "<ID>$app</ID>" "$places" && ! grep -qF "href=
 		awk '/<\/xbel>/ && !done { print ENVIRON["GBS_PLACE"]; done = 1 } { print }' "$places" >"$places.tmp" && cat "$places.tmp" >"$places"
 	rm -f "$places.tmp"
 fi
+command -v fusermount3 >/dev/null 2>&1 || echo "Note: install fuse3 (for example: sudo dnf install fuse3, or sudo apt install fuse3) to use the streaming folder."
 gtk-update-icon-cache -q "$data/icons/hicolor" 2>/dev/null || true
 pkill -u "$(id -u)" -f "$bin ui" && sleep 2 || true
 nohup "$bin" ui -no-browser -tray >/dev/null 2>&1 &

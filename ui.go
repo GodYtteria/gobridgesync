@@ -19,6 +19,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2/google"
@@ -89,6 +90,13 @@ func serveUI(ctx context.Context, paths Paths, force bool, addr string, browser,
 	go u.runner.Loop(ctx)
 	go u.runner.UpdateLoop(ctx)
 	go u.runner.WatchLoop(ctx)
+	var streamDone sync.WaitGroup
+	streamDone.Add(1)
+	go func() {
+		defer streamDone.Done()
+		u.runner.StreamLoop(ctx)
+	}()
+	defer waitBounded(&streamDone, 20*time.Second)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -249,14 +257,20 @@ func (u *ui) post(fn func(http.ResponseWriter, *http.Request) error) http.Handle
 
 func (u *ui) authorized(w http.ResponseWriter, r *http.Request) bool {
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-GBS-Token")), []byte(u.token)) != 1 {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		forbid(w, "GoBridgeSync restarted since this page was opened; reload the page", true)
 		return false
 	}
 	if o := r.Header.Get("Origin"); o != "" && o != "http://"+u.addr {
-		http.Error(w, "forbidden origin", http.StatusForbidden)
+		forbid(w, "request from another site was refused", false)
 		return false
 	}
 	return true
+}
+
+func forbid(w http.ResponseWriter, msg string, reload bool) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "reload": reload})
 }
 
 func (u *ui) jsonPost(fn func(*http.Request) (any, error)) http.HandlerFunc {
@@ -301,16 +315,19 @@ func (u *ui) credentials(w http.ResponseWriter, r *http.Request) error {
 }
 
 type settingsInput struct {
-	Folders *[]string `json:"folders"`
-	TwoWay  *bool     `json:"twoWay"`
-	Limit   *int      `json:"storageLimit"`
-	Every   *int      `json:"intervalMinutes"`
-	Startup *bool     `json:"startAtLogin"`
-	Updates *bool     `json:"autoUpdate"`
-	Exclude *[]string `json:"exclude"`
-	Speed   *int      `json:"speedLimitKB"`
-	Inbox   *bool     `json:"autoSortInbox"`
-	Reports *bool     `json:"sendReports"`
+	Folders  *[]string `json:"folders"`
+	TwoWay   *bool     `json:"twoWay"`
+	Limit    *int      `json:"storageLimit"`
+	Every    *int      `json:"intervalMinutes"`
+	Startup  *bool     `json:"startAtLogin"`
+	Updates  *bool     `json:"autoUpdate"`
+	Exclude  *[]string `json:"exclude"`
+	Speed    *int      `json:"speedLimitKB"`
+	Inbox    *bool     `json:"autoSortInbox"`
+	Reports  *bool     `json:"sendReports"`
+	DevMode  *bool     `json:"developerMode"`
+	Stream   *bool     `json:"streamFolder"`
+	StreamGB *int      `json:"streamGB"`
 }
 
 func applySettings(cfg AppConfig, in settingsInput, syncRoot string) (AppConfig, error) {
@@ -348,6 +365,18 @@ func applySettings(cfg AppConfig, in settingsInput, syncRoot string) (AppConfig,
 	}
 	if in.Reports != nil {
 		cfg.Reports = in.Reports
+	}
+	if in.DevMode != nil {
+		cfg.DevMode = *in.DevMode
+	}
+	if in.Stream != nil {
+		cfg.Stream = *in.Stream
+	}
+	if in.StreamGB != nil {
+		if *in.StreamGB < 1 || *in.StreamGB > 2000 {
+			return cfg, errors.New("cache size must be between 1 and 2000 GB")
+		}
+		cfg.StreamGB = *in.StreamGB
 	}
 	if in.Speed != nil {
 		if !speedLimits[*in.Speed] {
@@ -478,4 +507,16 @@ func pngHandler(b []byte) http.HandlerFunc {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func waitBounded(wg *sync.WaitGroup, d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
 }

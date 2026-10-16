@@ -43,6 +43,11 @@ type Status struct {
 	AutoUpdate     bool                  `json:"autoUpdate"`
 	AutoSortInbox  bool                  `json:"autoSortInbox"`
 	SendReports    bool                  `json:"sendReports"`
+	DevMode        bool                  `json:"developerMode"`
+	Stream         bool                  `json:"streamFolder"`
+	StreamGB       int                   `json:"streamGB"`
+	StreamState    string                `json:"streamState"`
+	StreamDir      string                `json:"streamDir"`
 	AskReports     bool                  `json:"askReports"`
 	ReportsReady   bool                  `json:"reportsAvailable"`
 	Version        string                `json:"version"`
@@ -58,6 +63,7 @@ type Status struct {
 	Progress       Progress              `json:"progress"`
 	Quota          *Quota                `json:"quota"`
 	PendingDeletes int                   `json:"pendingDeletes"`
+	Notices        []string              `json:"notices"`
 	LastRun        *RunStats             `json:"lastRun"`
 	Issues         []Issue               `json:"issues"`
 }
@@ -129,6 +135,12 @@ func newRunner(paths Paths, force bool) *Runner {
 
 func (r *Runner) SignOut(ctx context.Context) error {
 	done := make(chan error, 1)
+	r.mu.Lock()
+	stop := r.passStop
+	r.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
 	select {
 	case r.signout <- done:
 	case <-ctx.Done():
@@ -178,6 +190,8 @@ func (r *Runner) Snapshot() Status {
 		st.Folders, st.TwoWay, st.StorageLimit, st.Exclude = cfg.Folders, cfg.TwoWay, cfg.limit(), cfg.Exclude
 		st.Every, st.StartAtLogin, st.AutoUpdate, st.SpeedLimitKB = cfg.every(), cfg.startAtLogin(), cfg.autoUpdate(), cfg.speed()
 		st.AutoSortInbox = cfg.inboxSort()
+		st.DevMode = cfg.DevMode
+		st.Stream, st.StreamGB, st.StreamDir = cfg.Stream, cfg.streamGB(), defaultStreamDir()
 		st.ReportsReady = reportURL != ""
 		st.SendReports, st.AskReports = st.ReportsReady && cfg.sendReports(), st.ReportsReady && cfg.reportsUndecided()
 	}
@@ -305,7 +319,7 @@ func (r *Runner) pass(ctx, connCtx context.Context, ps *passState) error {
 		return fmt.Errorf("read settings: %w", err)
 	}
 	if ps.backupIDs == nil {
-		ps.backupIDs = loadIDJournal(filepath.Join(r.paths.StateDir, "backup-ids"))
+		ps.backupIDs = loadIDJournal(r.paths.backupIDs())
 	}
 	if ps.backup == nil {
 		if ps.backup, err = loadState(r.paths.backupState()); err != nil {
@@ -315,7 +329,7 @@ func (r *Runner) pass(ctx, connCtx context.Context, ps *passState) error {
 	saveBackup := func() error { return ps.backup.save(r.paths.backupState()) }
 	r.set(func(st *Status) { st.State, st.Message = "syncing", "Backing up" })
 	b := &Backup{
-		srv: ps.srv, folders: cfg.Folders, st: ps.backup, save: saveBackup, stop: r.isPaused, limitPct: cfg.limit(), index: ps.index, journal: ps.backupIDs,
+		srv: ps.srv, folders: cfg.Folders, st: ps.backup, save: saveBackup, stop: r.isPaused, limitPct: cfg.limit(), index: ps.index, journal: ps.backupIDs, covered: coveredRoots(cfg, r.paths.Root),
 		exclude:  newExcluder(cfg.Exclude),
 		notify:   r.addRecent,
 		progress: func(p Progress) { r.set(func(st *Status) { st.Progress = p }) },
@@ -325,6 +339,7 @@ func (r *Runner) pass(ctx, connCtx context.Context, ps *passState) error {
 		more:     r.Trigger,
 	}
 	runErr := b.Run(ctx)
+	r.set(func(st *Status) { st.Notices = b.notices })
 	saveErr := saveBackup()
 	if saveErr == nil {
 		saveErr = ps.backupIDs.prune(func(key string) bool {
@@ -350,7 +365,7 @@ func (r *Runner) pass(ctx, connCtx context.Context, ps *passState) error {
 		}
 		ps.sync = &Syncer{srv: ps.srv, paths: r.paths, st: st, force: r.force, notify: r.addRecent, stop: r.isPaused, index: ps.index,
 			progress: func(p Progress) { r.set(func(s *Status) { s.Progress = p }) }, pending: r.setPending, more: r.Trigger, allow: r.allowDeletes,
-			journal: loadIDJournal(filepath.Join(r.paths.StateDir, "sync-ids"))}
+			journal: loadIDJournal(r.paths.syncIDs())}
 	}
 	if ps.ex == nil || !slices.Equal(ps.exList, cfg.Exclude) {
 		ps.ex, ps.exList = newExcluder(cfg.Exclude), slices.Clone(cfg.Exclude)
@@ -360,6 +375,14 @@ func (r *Runner) pass(ctx, connCtx context.Context, ps *passState) error {
 	ps.sync.cache, ps.sync.excludeList = r.local, cfg.Exclude
 	r.set(func(st *Status) { st.State, st.Message = "syncing", "Syncing "+filepath.Base(r.paths.Root) })
 	return errors.Join(err, ps.sync.Run(ctx), ps.sync.save())
+}
+
+func coveredRoots(cfg AppConfig, syncRoot string) []string {
+	roots := append([]string{}, cfg.Folders...)
+	if cfg.TwoWay {
+		roots = append(roots, syncRoot)
+	}
+	return roots
 }
 
 func (r *Runner) checkLogin() bool {
@@ -473,13 +496,8 @@ func (r *Runner) Loop(ctx context.Context) {
 			return
 		case <-r.trigger:
 		case <-r.changed:
-			if rest := time.Until(lastStart.Add(passGap(lastTook))); rest > 0 {
-				select {
-				case <-ctx.Done():
-					return
-				case <-r.trigger:
-				case <-time.After(rest):
-				}
+			if rest := time.Until(lastStart.Add(passGap(lastTook))); rest > 0 && !r.waitGap(ctx, rest, ps) {
+				return
 			}
 		case <-wait:
 		case job := <-r.jobs:
@@ -488,6 +506,18 @@ func (r *Runner) Loop(ctx context.Context) {
 			done <- r.signOutNow(ps)
 		}
 	}
+}
+
+func (r *Runner) waitGap(ctx context.Context, rest time.Duration, ps *passState) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-r.trigger:
+	case <-time.After(rest):
+	case done := <-r.signout:
+		done <- r.signOutNow(ps)
+	}
+	return true
 }
 
 func (r *Runner) refreshSnapshot(ps *passState) {

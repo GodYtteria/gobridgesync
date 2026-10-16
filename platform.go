@@ -36,6 +36,41 @@ var windowsReserved = map[string]bool{
 	"LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true, "LPT5": true, "LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
 }
 
+func localNameFor(goos, name string) (string, bool) {
+	if validNameFor(goos, name) {
+		return name, true
+	}
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, tmpPrefix) {
+		return "", false
+	}
+	bad := "/\x00"
+	if goos == "windows" {
+		bad += `<>:"\|?*`
+	}
+	out := []rune(name)
+	for i, r := range out {
+		if strings.ContainsRune(bad, r) || (goos == "windows" && r < 32) {
+			out[i] = '_'
+		}
+	}
+	if goos == "windows" {
+		for i := len(out) - 1; i >= 0 && (out[i] == '.' || out[i] == ' '); i-- {
+			out[i] = '_'
+		}
+	}
+	s := string(out)
+	if !validNameFor(goos, s) {
+		base, ext, _ := strings.Cut(s, ".")
+		if ext != "" {
+			ext = "." + ext
+		}
+		s = base + "_" + ext
+	}
+	return s, validNameFor(goos, s)
+}
+
+func localName(name string) (string, bool) { return localNameFor(runtime.GOOS, name) }
+
 func validNameFor(goos, name string) bool {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") || strings.HasPrefix(name, tmpPrefix) {
 		return false

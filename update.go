@@ -35,6 +35,7 @@ const (
 type updater struct {
 	client  *http.Client
 	api     string
+	list    bool
 	files   string
 	pubKey  string
 	goos    string
@@ -44,13 +45,18 @@ type updater struct {
 
 func newUpdater() *updater {
 	api, files := "https://api.github.com/repos/"+updateRepo+"/releases/latest", "https://github.com/"+updateRepo+"/releases/download/"
+	list := false
+	if buildChannel() == "staging" {
+		api, list = "https://api.github.com/repos/"+updateRepo+"/releases?per_page=10", true
+	}
 	if updateBase != "" {
 		base := strings.TrimSuffix(updateBase, "/")
-		api, files = base+"/latest.json", base+"/"
+		api, files, list = base+"/latest.json", base+"/", false
 	}
 	return &updater{
 		client:  &http.Client{Timeout: 10 * time.Minute},
 		api:     api,
+		list:    list,
 		files:   files,
 		pubKey:  releasePublicKey,
 		goos:    runtime.GOOS,
@@ -178,16 +184,37 @@ func (u *updater) latest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var rel struct {
-		Tag string `json:"tag_name"`
+	type release struct {
+		Tag   string `json:"tag_name"`
+		Draft bool   `json:"draft"`
 	}
-	if err := json.Unmarshal(b, &rel); err != nil {
+	if !u.list {
+		var rel release
+		if err := json.Unmarshal(b, &rel); err != nil {
+			return "", err
+		}
+		if _, ok := parseVersion(rel.Tag); !ok {
+			return "", fmt.Errorf("unexpected release tag %q", rel.Tag)
+		}
+		return rel.Tag, nil
+	}
+	var rels []release
+	if err := json.Unmarshal(b, &rels); err != nil {
 		return "", err
 	}
-	if _, ok := parseVersion(rel.Tag); !ok {
-		return "", fmt.Errorf("unexpected release tag %q", rel.Tag)
+	best := ""
+	for _, r := range rels {
+		if _, ok := parseVersion(r.Tag); !ok || r.Draft {
+			continue
+		}
+		if best == "" || newerVersion(r.Tag, best) {
+			best = r.Tag
+		}
 	}
-	return rel.Tag, nil
+	if best == "" {
+		return "", errors.New("no release found")
+	}
+	return best, nil
 }
 
 func (u *updater) available(ctx context.Context) (string, error) {

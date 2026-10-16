@@ -110,7 +110,7 @@ func deleteToken(p Paths) error {
 }
 
 func resetAccountState(p Paths) error {
-	for _, f := range []string{p.index(), p.state(), p.backupState(), p.sessions(), p.scope()} {
+	for _, f := range []string{p.index(), p.state(), p.backupState(), p.sessions(), p.scope(), p.index() + ".log", p.syncIDs(), p.backupIDs()} {
 		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

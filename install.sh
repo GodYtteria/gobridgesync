@@ -33,6 +33,20 @@ else
 	sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 fi
 
+if [ -z "${GBS_BASE_URL:-}" ] && [ "${GBS_CHANNEL:-}" = staging ]; then
+	list=$(mktemp)
+	fetch "https://api.github.com/repos/$repo/releases?per_page=1" "$list" || fail "could not list releases"
+	tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$list" | head -n 1)
+	rm -f "$list"
+	case $tag in
+	v[0-9]*) ;;
+	*) fail "no staging release found" ;;
+	esac
+	case $tag in *[!A-Za-z0-9.-]*) fail "unexpected release tag $tag" ;; esac
+	base=https://github.com/$repo/releases/download/$tag
+	echo "Staging channel: $tag"
+fi
+
 app=gobridgesync
 [ "${GBS_EDITION:-}" = bukluran ] && app=gobridgesync-bukluran
 name=$app-$os-$arch.tar.gz

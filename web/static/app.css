@@ -126,7 +126,7 @@ a { color: var(--accent); }
 
 .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .card-head h2 { margin: 0; }
-.log { list-style: none; margin: 0; padding: 0; font: 0.82rem/1.6 ui-monospace, monospace; max-height: 260px; overflow: auto; }
+.log { list-style: none; margin: 0; padding: 0; font: 0.82rem/1.6 ui-monospace, monospace; min-height: 260px; overflow: auto; }
 .log li { border-bottom: 1px solid var(--border); padding: 3px 0; overflow-wrap: anywhere; }
 .issues li { color: var(--error); }
 
@@ -161,3 +161,15 @@ button.busy { animation: pulse 1s ease-in-out infinite; }
 .channel { background: repeating-linear-gradient(135deg, #f59e0b 0 14px, #fbbf24 14px 28px); color: #1c1917; font-weight: 700; text-align: center; padding: 6px 12px; font-size: 0.85rem; letter-spacing: 0.03em; }
 #cancel-uploads { margin-top: 10px; }
 #open-inbox, #dev-preset { margin: 0 0 12px; }
+
+.group { border-top: 1px solid var(--border, #ddd); padding: 4px 0 8px; }
+.group:first-of-type { border-top: 0; }
+.group > summary { cursor: pointer; font-weight: 700; font-size: 1rem; padding: 10px 0; list-style-position: inside; }
+.group > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.group h3 { margin-top: 14px; }
+
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.col > .card { margin-top: 16px; }
+.col > .card:first-child { margin-top: 16px; }
+.col > .activity { flex: 1; display: flex; flex-direction: column; }
+.activity .log { flex: 1 1 0; }

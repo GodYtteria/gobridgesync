@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"sort"
@@ -28,7 +29,56 @@ func (s *Syncer) record(p string, id, sum string) error {
 	return nil
 }
 
+func notFound(err error) bool {
+	var g *googleapi.Error
+	return errors.As(err, &g) && g.Code == http.StatusNotFound
+}
+
+func (s *Syncer) releaseID(p string) {
+	log.Printf("upload %s: earlier Drive id no longer exists; using a new one", p)
+	s.remote.releaseID("file:" + p)
+}
+
+func (s *Syncer) remoteMoved(ctx context.Context, p string, r RemoteFile) (bool, error) {
+	var cur *drive.File
+	err := retryRead(ctx, func() (err error) {
+		cur, err = s.srv.Files.Get(r.ID).Fields("id,md5Checksum,modifiedTime,size,trashed").Context(ctx).Do()
+		return err
+	})
+	var gerr *googleapi.Error
+	if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+		s.index.forget(r.ID)
+		log.Printf("upload %s: no longer on Drive; checking again", p)
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if cur.Trashed {
+		s.index.forget(r.ID)
+		log.Printf("upload %s: deleted on Drive in the meantime; checking again", p)
+		return true, nil
+	}
+	if cur.Md5Checksum == r.MD5 {
+		return false, nil
+	}
+	if cur.Md5Checksum == "" {
+		log.Printf("upload %s: replaced by a file type that cannot be synced; skipped", p)
+		return true, nil
+	}
+	s.index.note(cur, path.Base(p), "")
+	log.Printf("upload %s: changed on Drive in the meantime; checking again", p)
+	if s.more != nil && s.index != nil {
+		s.more()
+	}
+	return true, nil
+}
+
 func (s *Syncer) upload(ctx context.Context, p string, r *RemoteFile) error {
+	return s.uploadTry(ctx, p, r, true)
+}
+
+func (s *Syncer) uploadTry(ctx context.Context, p string, r *RemoteFile, freshID bool) error {
 	full := s.abs(p)
 	if r != nil {
 		sum, err := fileMD5(full)
@@ -37,6 +87,10 @@ func (s *Syncer) upload(ctx context.Context, p string, r *RemoteFile) error {
 		}
 		if sum == r.MD5 {
 			return s.record(p, r.ID, r.MD5)
+		}
+		changed, err := s.remoteMoved(ctx, p, *r)
+		if err != nil || changed {
+			return err
 		}
 	}
 	f, err := os.Open(full)
@@ -74,7 +128,11 @@ func (s *Syncer) upload(ctx context.Context, p string, r *RemoteFile) error {
 				s.journal.drop("file:" + p)
 			}
 			if errors.Is(err, errAdoptStale) {
-				return s.upload(ctx, p, &RemoteFile{ID: res.Id})
+				return s.upload(ctx, p, &RemoteFile{ID: res.Id, MD5: res.Md5Checksum})
+			}
+			if freshID && notFound(err) {
+				s.releaseID(p)
+				return s.uploadTry(ctx, p, r, false)
 			}
 		}
 	} else if r != nil {
@@ -100,7 +158,11 @@ func (s *Syncer) upload(ctx context.Context, p string, r *RemoteFile) error {
 				s.journal.drop("file:" + p)
 			}
 			if errors.Is(err, errAdoptStale) {
-				return s.upload(ctx, p, &RemoteFile{ID: res.Id})
+				return s.upload(ctx, p, &RemoteFile{ID: res.Id, MD5: res.Md5Checksum})
+			}
+			if freshID && notFound(err) {
+				s.releaseID(p)
+				return s.uploadTry(ctx, p, r, false)
 			}
 		}
 	}

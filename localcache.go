@@ -14,14 +14,16 @@ import (
 const localFullScanEvery = 10 * time.Minute
 
 type localCache struct {
-	mu       sync.Mutex
-	root     string
-	exclude  []string
-	files    map[string]LocalFile
-	dirty    map[string]bool
-	watching bool
-	full     bool
-	fullAt   time.Time
+	mu      sync.Mutex
+	root    string
+	exclude []string
+	files   map[string]LocalFile
+
+	unreadable []string
+	dirty      map[string]bool
+	watching   bool
+	full       bool
+	fullAt     time.Time
 }
 
 func newLocalCache() *localCache { return &localCache{full: true} }
@@ -48,9 +50,9 @@ func (c *localCache) changed(abs string) {
 	c.dirty[abs] = true
 }
 
-func (c *localCache) scan(root string, ex *excluder, exclude []string, now time.Time) (map[string]LocalFile, error) {
+func (c *localCache) scan(root string, ex *excluder, exclude []string, now time.Time) (map[string]LocalFile, []string, error) {
 	if c == nil {
-		return scanLocal(root, ex)
+		return scanLocalSkipping(root, ex)
 	}
 	c.mu.Lock()
 	dirty := c.dirty
@@ -58,27 +60,28 @@ func (c *localCache) scan(root string, ex *excluder, exclude []string, now time.
 	full := c.full || !c.watching || c.files == nil || c.root != root || !slices.Equal(c.exclude, exclude) || now.Sub(c.fullAt) >= localFullScanEvery
 	c.mu.Unlock()
 	if full {
-		files, err := scanLocal(root, ex)
+		files, skipped, err := scanLocalSkipping(root, ex)
 		if err != nil {
 			c.mu.Lock()
 			c.full = true
 			c.mu.Unlock()
-			return nil, err
+			return nil, nil, err
 		}
 		c.mu.Lock()
 		c.files, c.root, c.exclude, c.fullAt, c.full = files, root, slices.Clone(exclude), now, false
+		c.unreadable = slices.Clone(skipped)
 		c.mu.Unlock()
-		return files, nil
+		return files, skipped, nil
 	}
 	for abs := range dirty {
 		if err := c.refresh(root, ex, abs); err != nil {
 			c.mu.Lock()
 			c.full = true
 			c.mu.Unlock()
-			return scanLocal(root, ex)
+			return scanLocalSkipping(root, ex)
 		}
 	}
-	return c.files, nil
+	return c.files, slices.Clone(c.unreadable), nil
 }
 
 func (c *localCache) refresh(root string, ex *excluder, abs string) error {
@@ -87,6 +90,7 @@ func (c *localCache) refresh(root string, ex *excluder, abs string) error {
 		return nil
 	}
 	rel = filepath.ToSlash(rel)
+	c.dropUnreadable(rel)
 	if _, wasFile := c.files[rel]; wasFile {
 		delete(c.files, rel)
 	} else {
@@ -100,11 +104,15 @@ func (c *localCache) refresh(root string, ex *excluder, abs string) error {
 	if _, err := os.Lstat(abs); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	err = walkLocal(root, abs, ex, c.files)
+	err = walkLocal(root, abs, ex, c.files, &c.unreadable)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+func (c *localCache) dropUnreadable(rel string) {
+	c.unreadable = slices.DeleteFunc(c.unreadable, func(u string) bool { return u == rel || strings.HasPrefix(u, rel+"/") })
 }
 
 func (c *localCache) dropTree(rel string) {

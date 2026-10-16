@@ -13,18 +13,21 @@ import (
 )
 
 type AppConfig struct {
-	Folders []string `json:"folders"`
-	TwoWay  bool     `json:"twoWay"`
-	Paused  bool     `json:"paused"`
-	Limit   int      `json:"storageLimit"`
-	Every   int      `json:"intervalMinutes"`
-	Startup *bool    `json:"startAtLogin,omitempty"`
-	Updates *bool    `json:"autoUpdate,omitempty"`
-	Exclude []string `json:"exclude"`
-	Speed   int      `json:"speedLimitKB"`
-	Inbox   *bool    `json:"autoSortInbox,omitempty"`
-	Reports *bool    `json:"sendReports,omitempty"`
-	Version int      `json:"configVersion"`
+	Folders  []string `json:"folders"`
+	TwoWay   bool     `json:"twoWay"`
+	Paused   bool     `json:"paused"`
+	Limit    int      `json:"storageLimit"`
+	Every    int      `json:"intervalMinutes"`
+	Startup  *bool    `json:"startAtLogin,omitempty"`
+	Updates  *bool    `json:"autoUpdate,omitempty"`
+	Exclude  []string `json:"exclude"`
+	Speed    int      `json:"speedLimitKB"`
+	Inbox    *bool    `json:"autoSortInbox,omitempty"`
+	Reports  *bool    `json:"sendReports,omitempty"`
+	DevMode  bool     `json:"developerMode,omitempty"`
+	Stream   bool     `json:"streamFolder,omitempty"`
+	StreamGB int      `json:"streamGB,omitempty"`
+	Version  int      `json:"configVersion"`
 }
 
 const configVersion = 1
@@ -74,6 +77,13 @@ func (c AppConfig) every() int {
 		return c.Every
 	}
 	return defaultEveryMinutes
+}
+
+func (c AppConfig) streamGB() int {
+	if c.StreamGB >= 1 {
+		return c.StreamGB
+	}
+	return 20
 }
 
 func (c AppConfig) startAtLogin() bool { return c.Startup == nil || *c.Startup }
@@ -150,14 +160,6 @@ func folderSuggestions(home string, chosen []string, syncRoot string) []string {
 }
 
 func (c AppConfig) encode() ([]byte, error) { return json.MarshalIndent(c, "", "  ") }
-
-func (c AppConfig) save(p Paths) error {
-	b, err := c.encode()
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(p.appConfig(), b, 0o600)
-}
 
 func expandHome(dir string) (string, error) {
 	if dir == "~" || strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {

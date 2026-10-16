@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path"
@@ -20,10 +21,34 @@ func (s *Syncer) deleteRemote(ctx context.Context, p string) error {
 	s.mu.Lock()
 	id := s.st.Files[p].ID
 	s.mu.Unlock()
-	_, err := s.srv.Files.Update(id, &drive.File{Trashed: true}).Fields("id").Context(ctx).Do()
-	var gerr *googleapi.Error
-	if err != nil && !(errors.As(err, &gerr) && gerr.Code == http.StatusNotFound) {
+	s.mu.Lock()
+	known := s.st.Files[p].MD5
+	s.mu.Unlock()
+	var cur *drive.File
+	gerr := new(googleapi.Error)
+	err := retryRead(ctx, func() (err error) {
+		cur, err = s.srv.Files.Get(id).Fields("id,md5Checksum,modifiedTime,size,trashed").Context(ctx).Do()
 		return err
+	})
+	switch {
+	case errors.As(err, &gerr) && gerr.Code == http.StatusNotFound:
+	case err != nil:
+		return err
+	case !cur.Trashed && cur.Md5Checksum != known:
+		s.index.note(cur, path.Base(p), "")
+		log.Printf("delete %s: changed on Drive in the meantime; keeping it", p)
+		if s.more != nil && s.index != nil {
+			s.more()
+		}
+		return nil
+	case !cur.Trashed:
+		err = retry(ctx, func() error {
+			_, err := s.srv.Files.Update(id, &drive.File{Trashed: true}).Fields("id").Context(ctx).Do()
+			return err
+		})
+		if err != nil && !(errors.As(err, &gerr) && gerr.Code == http.StatusNotFound) {
+			return err
+		}
 	}
 	s.index.forget(id)
 	s.mu.Lock()
@@ -100,6 +125,9 @@ func (s *Syncer) trashEmptyFolders(ctx context.Context, remote *Remote, tried []
 		if !empty {
 			continue
 		}
+		if !s.folderUnchanged(ctx, id) {
+			continue
+		}
 		err = retry(ctx, func() error {
 			_, err := s.srv.Files.Update(id, &drive.File{Trashed: true}).Fields("id").Context(ctx).Do()
 			return err
@@ -113,6 +141,19 @@ func (s *Syncer) trashEmptyFolders(ctx context.Context, remote *Remote, tried []
 		s.report("delete-remote-folder " + d)
 	}
 	return errs
+}
+
+func (s *Syncer) folderUnchanged(ctx context.Context, id string) bool {
+	want := s.index.modTime(id)
+	if want == "" {
+		return false
+	}
+	var cur *drive.File
+	err := retryRead(ctx, func() (err error) {
+		cur, err = s.srv.Files.Get(id).Fields("id,modifiedTime,trashed").Context(ctx).Do()
+		return err
+	})
+	return err == nil && !cur.Trashed && cur.ModifiedTime == want
 }
 
 func (s *Syncer) driveFolderEmpty(ctx context.Context, id string, ignore map[string]bool) (bool, error) {

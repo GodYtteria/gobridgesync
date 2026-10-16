@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,6 +22,10 @@ commands:
   sync    run one sync pass
   run     sync continuously
   ui      sync continuously with a web interface on localhost
+  stream  mount Google Drive as a read-only streaming folder (Linux; files download when opened)
+  stream-pin PATH    keep a file or folder (path inside your Drive) on this computer while streaming (applies within a minute)
+  stream-unpin PATH  stop keeping it
+  stream-pins        list what is kept
   uninstall  remove GoBridgeSync (-purge also removes sign-in and settings)
 
 flags:
@@ -30,6 +35,8 @@ flags:
   -addr ADDR       web interface address for ui (default 127.0.0.1:47811)
   -no-browser      do not open the browser for ui
   -tray            show a system tray icon for ui
+  -mount DIR       stream: mount folder (default ~/GoogleDrive-Stream)
+  -cache-gb N      stream: local cache size in GB (default 20)
   -full            login: grant whole-Drive access, needed for sync, run, and two-way sync`
 
 func main() {
@@ -53,6 +60,8 @@ func main() {
 	tray := fs.Bool("tray", false, "")
 	full := fs.Bool("full", false, "")
 	purge := fs.Bool("purge", false, "")
+	mount := fs.String("mount", defaultStreamDir(), "")
+	cacheGB := fs.Int("cache-gb", 20, "")
 	fs.Parse(os.Args[2:])
 	if paths.Root, err = filepath.Abs(*root); err != nil {
 		log.Fatal(err)
@@ -71,6 +80,20 @@ func main() {
 			log.Fatal("interval must be at least 10s")
 		}
 		err = requireFull(paths, syncLoop(ctx, paths, *force, *interval))
+	case "stream-pin", "stream-unpin":
+		if fs.NArg() != 1 {
+			log.Fatal("usage: " + cmd + " PATH")
+		}
+		err = (pinStore{file: paths.pins()}).edit(fs.Arg(0), cmd == "stream-pin")
+	case "stream-pins":
+		var list []string
+		if list, err = (pinStore{file: paths.pins()}).load(); err == nil {
+			if len(list) > 0 {
+				fmt.Println(strings.Join(list, "\n"))
+			}
+		}
+	case "stream":
+		err = runStream(ctx, paths, *mount, *cacheGB, nil)
 	case "uninstall":
 		err = uninstall(paths, *purge)
 	case "ui":

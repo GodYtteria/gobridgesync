@@ -56,6 +56,7 @@ Change these from the tray menu or the web interface.
 | Storage limit | 90% | All, 90%, 75%, 50% of your Drive storage |
 | Sync across computers | On | On, Off |
 | Install updates automatically | On | On, Off |
+| Developer mode | Off | On, Off (shows the **Add developer folders** preset) |
 
 **Data use:** without internet, GoBridgeSync uses almost no data and tries again later. Each check reads the list of your backed-up files, so if you have many files or a limited data plan, choose a longer interval or **Manual only**.
 
@@ -87,7 +88,7 @@ Files still downloading or changed in the last 10 seconds wait. Name clashes bec
 
 ## Coding in the sync folder
 
-Use **Don't back up → Add developer folders** to skip `node_modules`, `.venv`, `build`, `dist`, `target`, and similar folders that `npm install` or a build recreates. `.env` and `.git` stay included. Work on a project from one computer at a time, and don't share project folders that contain `.env`.
+Turn on **Developer mode**, then use **Don't back up → Add developer folders** to skip `node_modules`, `.venv`, `build`, `dist`, `target`, and similar folders that `npm install` or a build recreates. `.env` and `.git` stay included. Work on a project from one computer at a time, and don't share project folders that contain `.env`.
 
 ## What syncs
 
@@ -103,9 +104,12 @@ Use **Don't back up → Add developer folders** to skip `node_modules`, `.venv`,
 
 ## Good to know
 
-- Files uploaded on drive.google.com into the sync folder are not seen by the app.
 - Google allows 750 GB of uploads per user per day. Rate limits are retried automatically.
-- Removed files go to `~/.local/share/gobridgesync/trash/`, not straight to deletion.
+- If one pass would delete more than 5,000 files (or over half of your files), GoBridgeSync stops the deletes and asks you to **Allow** them. Everything else keeps syncing.
+- Before it overwrites or deletes a Drive file, GoBridgeSync checks that the file has not changed on Drive since its last look.
+- Two files with the same name in one Drive folder (for example from two computers) are kept: the extra one is renamed `name (conflict …)`.
+- A folder link that points outside your backed-up folders shows a **Heads up** notice instead of being skipped silently.
+- Removed files go to `~/.local/share/gobridgesync/trash/`, not straight to deletion. They stay there for 30 days.
 - Google keeps older versions of a file for 30 days; restore them from **Restore → Versions**.
 - Files in **Don't back up** are never deleted from Drive or other computers.
 - Logs are in `~/.local/share/gobridgesync/gobridgesync.log` (tray → **Open log file**).

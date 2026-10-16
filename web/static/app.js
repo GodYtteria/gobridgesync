@@ -93,7 +93,24 @@ function hintFor(msg) {
   return "See Problems below for details.";
 }
 
+function renderNotices(s) {
+  const notes = s.notices || [];
+  $("notices").hidden = notes.length === 0;
+  const list = $("notices-list");
+  list.replaceChildren(...notes.slice(0, 5).map((n) => {
+    const li = document.createElement("li");
+    li.textContent = n;
+    return li;
+  }));
+  if (notes.length > 5) {
+    const li = document.createElement("li");
+    li.textContent = "and " + (notes.length - 5) + " more";
+    list.append(li);
+  }
+}
+
 function renderAlert(s) {
+  renderNotices(s);
   const n = s.pendingDeletes || 0;
   $("mass-delete").hidden = n === 0;
   if (n) {
@@ -229,6 +246,14 @@ function render(s) {
   $("startup").checked = s.startAtLogin;
   $("autoupdate").checked = s.autoUpdate;
   $("reports-row").hidden = !s.reportsAvailable;
+  $("devmode").checked = s.developerMode;
+  $("stream-row").hidden = s.os !== "linux";
+  $("stream").checked = s.streamFolder;
+  $("stream-size-row").hidden = s.os !== "linux" || !s.streamFolder;
+  $("stream-gb").value = String(s.streamGB);
+  $("stream-dir").textContent = s.streamDir || "";
+  $("stream-state").textContent = s.streamFolder && s.streamState ? "(" + s.streamState + ")" : "";
+  $("dev-preset").hidden = !s.developerMode;
   $("reports").checked = s.sendReports;
   $("ask-reports").hidden = !(s.askReports && (s.issues || []).length);
   $("inbox").checked = s.autoSortInbox;
@@ -314,7 +339,7 @@ function render(s) {
     return li;
   }));
   const list = $("recent");
-  list.replaceChildren(...s.recent.map((line) => {
+  list.replaceChildren(...groupRecent(s.recent).map((line) => {
     const li = document.createElement("li");
     li.textContent = line;
     return li;
@@ -324,6 +349,29 @@ function render(s) {
     li.textContent = "Nothing yet";
     list.append(li);
   }
+}
+
+function groupRecent(lines) {
+  const out = [];
+  let last = "";
+  let count = 0;
+  const flush = (first) => {
+    if (first) out.push(count > 1 ? first + " ×" + count : first);
+  };
+  let first = "";
+  for (const line of lines) {
+    const text = line.replace(/^\d\d:\d\d:\d\d /, "");
+    if (text === last) {
+      count++;
+      continue;
+    }
+    flush(first);
+    first = line;
+    last = text;
+    count = 1;
+  }
+  flush(first);
+  return out;
 }
 
 async function refresh() {
@@ -492,6 +540,9 @@ $("allow-deletes").addEventListener("click", () => {
   $("mass-delete").hidden = true;
   act("/api/allow-deletes");
 });
+$("stream").addEventListener("change", (e) => saveSettings({ streamFolder: e.target.checked }));
+$("stream-gb").addEventListener("change", (e) => saveSettings({ streamGB: Number(e.target.value) }));
+$("devmode").addEventListener("change", (e) => saveSettings({ developerMode: e.target.checked }));
 $("dev-preset").addEventListener("click", () => act("/api/exclude-preset"));
 $("update").addEventListener("click", () => act("/api/update"));
 $("every").addEventListener("change", (e) => saveSettings({ intervalMinutes: Number(e.target.value) }));

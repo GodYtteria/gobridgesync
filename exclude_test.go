@@ -235,7 +235,7 @@ func TestTrashEmptyFoldersChecksDriveFirst(t *testing.T) {
 			case strings.Contains(q, "'EMPTY'"):
 				w.Write([]byte(`{"files":[{"id":"ida","mimeType":"text/plain"},{"id":"ESUB","mimeType":"application/vnd.google-apps.folder"}]}`))
 			default:
-				w.Write([]byte(`{"files":[]}`))
+				w.Write([]byte(`{"files":[],"id":"x","modifiedTime":"t"}`))
 			}
 			return
 		}
@@ -247,7 +247,8 @@ func TestTrashEmptyFoldersChecksDriveFirst(t *testing.T) {
 	defer api.Close()
 	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(api.Client()), option.WithEndpoint(api.URL+"/"))
 	root := t.TempDir()
-	s := &Syncer{srv: srv, paths: Paths{Root: root}, st: &State{Files: map[string]Entry{}}}
+	s := &Syncer{srv: srv, paths: Paths{Root: root}, st: &State{Files: map[string]Entry{}},
+		index: &driveIndex{Files: map[string]*drive.File{"EMPTY": {Id: "EMPTY", ModifiedTime: "t"}, "FULL": {Id: "FULL", ModifiedTime: "t"}}}}
 	remote := &Remote{
 		Files:   map[string]RemoteFile{"empty/a.txt": {ID: "ida"}, "full/b.txt": {ID: "idb"}},
 		Folders: map[string]string{"empty": "EMPTY", "full": "FULL"},
@@ -300,7 +301,7 @@ func TestDeleteRemoteAllRetriesRateLimit(t *testing.T) {
 	defer api.Close()
 	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(api.Client()), option.WithEndpoint(api.URL+"/"))
 	s := &Syncer{srv: srv, st: &State{Files: map[string]Entry{"a": {ID: "a"}}}}
-	if errs := s.deleteRemoteAll(context.Background(), []string{"a"}); len(errs) != 0 || calls != 2 || len(s.st.Files) != 0 {
+	if errs := s.deleteRemoteAll(context.Background(), []string{"a"}); len(errs) != 0 || calls != 3 || len(s.st.Files) != 0 {
 		t.Fatalf("errs=%v calls=%d files=%v", errs, calls, s.st.Files)
 	}
 }

@@ -1,6 +1,12 @@
 $ErrorActionPreference = 'Stop'
 $repo = if ($env:GBS_REPO) { $env:GBS_REPO } else { 'GodYtteria/gobridgesync-desktop' }
 $base = if ($env:GBS_BASE_URL) { $env:GBS_BASE_URL } else { "https://github.com/$repo/releases/latest/download" }
+if (-not $env:GBS_BASE_URL -and $env:GBS_CHANNEL -eq 'staging') {
+    $tag = @(Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=1")[0].tag_name
+    if ($tag -notmatch '^v[0-9][0-9A-Za-z.\-]*$') { throw "No staging release found" }
+    $base = "https://github.com/$repo/releases/download/$tag"
+    Write-Host "Staging channel: $tag"
+}
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 if ($env:GBS_EDITION -eq 'bukluran') {
     $app, $title, $folder, $port = 'gobridgesync-bukluran', 'GoBridgeSync Bukluran', 'GoogleDrive', 47812

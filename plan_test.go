@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -474,5 +475,32 @@ func TestAllowDeletesOnce(t *testing.T) {
 	r.AllowDeletes()
 	if !r.allowDeletes(6600) || r.allowDeletes(6000) {
 		t.Fatal("approval must apply once")
+	}
+}
+
+func TestConflictNameIsUnique(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 16, 5, 48, 10, 0, time.UTC)
+	first := conflictName(filepath.Join(dir, "c.md"), now)
+	os.WriteFile(first, []byte("L0"), 0o644)
+	second := conflictName(filepath.Join(dir, "c.md"), now)
+	if first == second || !strings.HasSuffix(second, "(conflict 20261016-054810 2).md") {
+		t.Fatalf("first=%s second=%s", first, second)
+	}
+}
+
+func TestApplySettingsStreamCacheSize(t *testing.T) {
+	root := t.TempDir()
+	on, gb := true, 50
+	got, err := applySettings(AppConfig{}, settingsInput{Stream: &on, StreamGB: &gb}, filepath.Join(root, "sync"))
+	if err != nil || !got.Stream || got.streamGB() != 50 {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+	if (AppConfig{}).streamGB() != 20 {
+		t.Fatal("default cache must be 20 GB")
+	}
+	zero := 0
+	if _, err := applySettings(AppConfig{}, settingsInput{StreamGB: &zero}, filepath.Join(root, "sync")); err == nil {
+		t.Fatal("a cache smaller than 1 GB must be rejected")
 	}
 }

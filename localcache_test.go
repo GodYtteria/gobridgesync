@@ -22,7 +22,7 @@ func TestLocalCacheRefreshesOnlyChangedPaths(t *testing.T) {
 	c := newLocalCache()
 	c.setWatching(true)
 	now := time.Now()
-	files, err := c.scan(root, ex, []string{"node_modules"}, now)
+	files, _, err := c.scan(root, ex, []string{"node_modules"}, now)
 	if err != nil || len(files) != 3 {
 		t.Fatalf("first scan: %v %v", files, err)
 	}
@@ -35,7 +35,7 @@ func TestLocalCacheRefreshesOnlyChangedPaths(t *testing.T) {
 	for _, p := range []string{"a.txt", "d/new.txt", "d/e", "node_modules/y.js"} {
 		c.changed(filepath.Join(root, filepath.FromSlash(p)))
 	}
-	files, err = c.scan(root, ex, []string{"node_modules"}, now.Add(time.Minute))
+	files, _, err = c.scan(root, ex, []string{"node_modules"}, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,13 +55,13 @@ func TestLocalCacheRefreshesOnlyChangedPaths(t *testing.T) {
 		t.Error("unchanged scan should not have walked the whole tree")
 	}
 
-	files, _ = c.scan(root, ex, []string{"node_modules"}, now.Add(localFullScanEvery+time.Minute))
+	files, _, _ = c.scan(root, ex, []string{"node_modules"}, now.Add(localFullScanEvery+time.Minute))
 	if _, ok := files["untracked.txt"]; !ok {
 		t.Error("periodic full scan missed a file")
 	}
 	c.setWatching(false)
 	write("later.txt", "l")
-	files, _ = c.scan(root, ex, []string{"node_modules"}, now.Add(localFullScanEvery+2*time.Minute))
+	files, _, _ = c.scan(root, ex, []string{"node_modules"}, now.Add(localFullScanEvery+2*time.Minute))
 	if _, ok := files["later.txt"]; !ok {
 		t.Error("without a watcher every scan must be full")
 	}

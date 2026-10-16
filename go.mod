@@ -1,9 +1,12 @@
 module gobridgesync
 
-go 1.26.9
+go 1.27.2
 
 require (
+	aead.dev/minisign v0.3.0
 	fyne.io/systray v1.12.2
+	github.com/fsnotify/fsnotify v1.10.1
+	github.com/hanwen/go-fuse/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.49.0
@@ -11,14 +14,12 @@ require (
 )
 
 require (
-	aead.dev/minisign v0.3.0 // indirect
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect

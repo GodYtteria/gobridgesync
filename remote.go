@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"maps"
 	"net/http"
 	"path"
 	"runtime"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,16 +62,28 @@ type Remote struct {
 	Docs      map[string]RemoteDoc
 	Folders   map[string]string
 	Ambiguous map[string]bool
+	Dupes     map[string][]*drive.File
+	Invalid   []string
 
 	mu      sync.Mutex
 	pending map[string]*folderCall
 	ids     []string
 	idFor   map[string]string
 	journal *idJournal
+	index   *driveIndex
 }
 
 func (r *Remote) clone() *Remote {
-	return &Remote{Files: maps.Clone(r.Files), Docs: maps.Clone(r.Docs), Folders: maps.Clone(r.Folders), Ambiguous: maps.Clone(r.Ambiguous)}
+	return &Remote{Files: maps.Clone(r.Files), Docs: maps.Clone(r.Docs), Folders: maps.Clone(r.Folders), Ambiguous: maps.Clone(r.Ambiguous), Dupes: maps.Clone(r.Dupes), Invalid: slices.Clone(r.Invalid)}
+}
+
+func (r *Remote) releaseID(key string) {
+	r.mu.Lock()
+	delete(r.idFor, key)
+	r.mu.Unlock()
+	if err := r.journal.drop(key); err != nil {
+		log.Printf("forget Drive id for %s: %v", key, err)
+	}
 }
 
 const idBatch = 100
@@ -162,13 +178,21 @@ func foldKey(p string) string {
 	return p
 }
 
-const remoteFields = "id,name,mimeType,parents,md5Checksum,modifiedTime,size,webViewLink"
+const remoteFields = "id,name,mimeType,parents,md5Checksum,modifiedTime,size,webViewLink,ownedByMe,capabilities/canRename,version"
 
-func rootFolderID(ctx context.Context, srv *drive.Service) string {
-	if root, err := srv.Files.Get("root").Fields("id").Context(ctx).Do(); err == nil {
-		return root.Id
+func rootFolderID(ctx context.Context, srv *drive.Service) (string, error) {
+	var id string
+	err := retryRead(ctx, func() error {
+		root, err := srv.Files.Get("root").Fields("id").Context(ctx).Do()
+		if err == nil {
+			id = root.Id
+		}
+		return err
+	})
+	if err == nil && id == "" {
+		err = errors.New("Google Drive did not return the My Drive folder id")
 	}
-	return ""
+	return id, err
 }
 
 func listAll(ctx context.Context, srv *drive.Service) (map[string]*drive.File, error) {
@@ -185,7 +209,10 @@ func listAll(ctx context.Context, srv *drive.Service) (map[string]*drive.File, e
 }
 
 func listRemote(ctx context.Context, srv *drive.Service) (*Remote, error) {
-	rootID := rootFolderID(ctx, srv)
+	rootID, err := rootFolderID(ctx, srv)
+	if err != nil {
+		return nil, err
+	}
 	all, err := listAll(ctx, srv)
 	if err != nil {
 		return nil, err
@@ -197,6 +224,7 @@ func buildRemote(all map[string]*drive.File, rootID string) (*Remote, error) {
 	paths := map[string]string{}
 	if rootID != "" {
 		paths[rootID] = ""
+		paths["root"] = ""
 	}
 	var resolve func(id string, depth int) (string, bool)
 	resolve = func(id string, depth int) (string, bool) {
@@ -244,6 +272,27 @@ func buildRemote(all map[string]*drive.File, rootID string) (*Remote, error) {
 			r.Ambiguous[k] = true
 		}
 	}
+	for _, f := range all {
+		if validName(f.Name) || len(f.Parents) == 0 {
+			continue
+		}
+		parent, ok := resolve(f.Parents[0], 0)
+		if !ok {
+			continue
+		}
+		p := path.Join(parent, f.Name)
+		r.Ambiguous[foldKey(p)] = true
+		r.Invalid = append(r.Invalid, p)
+	}
+	sort.Strings(r.Invalid)
+	for p, fs := range byPath {
+		if k := foldKey(p); r.Ambiguous[k] {
+			if r.Dupes == nil {
+				r.Dupes = map[string][]*drive.File{}
+			}
+			r.Dupes[k] = append(r.Dupes[k], fs...)
+		}
+	}
 	for p, fs := range byPath {
 		if r.blocked(p) {
 			continue
@@ -258,12 +307,22 @@ func buildRemote(all map[string]*drive.File, rootID string) (*Remote, error) {
 		default:
 			t, err := time.Parse(time.RFC3339, f.ModifiedTime)
 			if err != nil {
-				return nil, err
+				log.Printf("drive file %s: unreadable modified time %q; skipped: %v", p, f.ModifiedTime, err)
+				r.Ambiguous[foldKey(p)] = true
+				continue
 			}
 			r.Files[p] = RemoteFile{ID: f.Id, MD5: f.Md5Checksum, Size: f.Size, MTime: t.UnixNano()}
 		}
 	}
 	return r, nil
+}
+
+func (r *Remote) invalidNameErrors() []error {
+	errs := make([]error, 0, len(r.Invalid))
+	for _, p := range r.Invalid {
+		errs = append(errs, fmt.Errorf("rename %q on Google Drive: its name cannot be used on this computer, so it and everything inside it is not synced", p))
+	}
+	return errs
 }
 
 func (r *Remote) sub(prefix, id string) *Remote {
@@ -292,6 +351,19 @@ func (r *Remote) sub(prefix, id string) *Remote {
 	for k := range r.Ambiguous {
 		if rel, ok := strings.CutPrefix(k, foldKey(pre)); ok {
 			out.Ambiguous[rel] = true
+		}
+	}
+	for _, p := range r.Invalid {
+		if rel, ok := strings.CutPrefix(p, pre); ok {
+			out.Invalid = append(out.Invalid, rel)
+		}
+	}
+	for k, fs := range r.Dupes {
+		if rel, ok := strings.CutPrefix(k, foldKey(pre)); ok {
+			if out.Dupes == nil {
+				out.Dupes = map[string][]*drive.File{}
+			}
+			out.Dupes[rel] = fs
 		}
 	}
 	return out

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +19,7 @@ func TestIDJournalSurvivesRestart(t *testing.T) {
 		t.Fatalf("lost after restart: %q %v", id, ok)
 	}
 	r := &Remote{journal: again}
-	if id, err := r.newID(nil, nil, "folder:d"); err != nil || id != "id2" {
+	if id, err := r.newID(context.TODO(), nil, "folder:d"); err != nil || id != "id2" {
 		t.Fatalf("newID ignored the journal: %q %v", id, err)
 	}
 	if err := again.prune(func(k string) bool { return k == "file:a.txt" }); err != nil {

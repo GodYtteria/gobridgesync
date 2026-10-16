@@ -241,9 +241,9 @@ func TestSyncerDownloadAll(t *testing.T) {
 	var last Progress
 	s := &Syncer{srv: srv, paths: Paths{Root: root}, st: st, progress: func(p Progress) { last = p }}
 	errs := s.downloadAll(context.Background(), []pendingDownload{
-		{"a.txt", RemoteFile{ID: "good1", MD5: sum(files["good1"]), Size: 3}},
-		{"d/b.txt", RemoteFile{ID: "good2", MD5: sum(files["good2"]), Size: 3}},
-		{"x.bin", RemoteFile{ID: "bad", MD5: "m", Size: 9}},
+		{path: "a.txt", file: RemoteFile{ID: "good1", MD5: sum(files["good1"]), Size: 3}},
+		{path: "d/b.txt", file: RemoteFile{ID: "good2", MD5: sum(files["good2"]), Size: 3}},
+		{path: "x.bin", file: RemoteFile{ID: "bad", MD5: "m", Size: 9}},
 	})
 	if len(errs) != 1 || st.Unavailable["x.bin"] != "m" {
 		t.Fatalf("errs %v unavailable %v", errs, st.Unavailable)

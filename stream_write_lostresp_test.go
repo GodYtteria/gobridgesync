@@ -21,7 +21,7 @@ func md5Hex(s string) string {
 
 func restartWriter(t *testing.T, e *wenv, journal *idJournal) *streamWriter {
 	t.Helper()
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	again, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, journal, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -35,7 +35,7 @@ func newFuseEnv(t *testing.T) *fuseEnv {
 	fake := &wfake{files: map[string]*wfile{}}
 	srvHTTP := newWFakeServer(t, fake)
 	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(srvHTTP.Client()), option.WithEndpoint(srvHTTP.URL+"/"))
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	index := &driveIndex{RootID: "root", Files: map[string]*drive.File{"D": {Id: "D", Name: "docs", Parents: []string{"root"}, MimeType: folderMime}}}
 	var snap atomic.Pointer[Remote]
 	refresh := func() {

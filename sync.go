@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -328,7 +329,26 @@ func (s *Syncer) deleteLocal(p string) error {
 		return err
 	}
 	delete(s.st.Files, p)
+	s.pruneEmptyParents(p)
 	return nil
+}
+
+func (s *Syncer) pruneEmptyParents(p string) {
+	for dir := path.Dir(p); dir != "." && dir != "" && dir != inboxName; dir = path.Dir(dir) {
+		if s.remote != nil {
+			if _, onDrive := s.remote.Folders[dir]; onDrive {
+				return
+			}
+		}
+		err := os.Remove(s.abs(dir))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return
+		}
+		log.Printf("removed empty folder %s (gone from Drive)", dir)
+	}
 }
 
 func underAny(dirs []string, p string) bool {

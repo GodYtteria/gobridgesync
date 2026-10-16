@@ -1,11 +1,15 @@
 #!/bin/sh
 set -eu
-tag=${1:?usage: contrib/promote.sh vX.Y.Z}
+tag=${1:?usage: contrib/promote.sh vX.Y.Z | vX.Y.Z-rcN}
 prod=${GBS_PROD_REMOTE:-prod}
 cd "$(dirname "$0")/.."
-case $tag in *-*) echo "promote stable versions only, not $tag" >&2; exit 1 ;; esac
+case $tag in
+*-rc[0-9]*) rcs=$tag ;;
+*-*) echo "promote stable versions or release candidates (vX.Y.Z-rcN), not $tag" >&2; exit 1 ;;
+*) rcs=$(git tag -l "$tag-rc*") ;;
+esac
 passed=0
-for rc in $(git tag -l "$tag-rc*"); do
+for rc in $rcs; do
 	n=$(RC="$rc" gh run list --repo "${GBS_STAGING_REPO:-GodYtteria/gobridgesync-desktop-staging}" --workflow staging.yml --branch "$rc" \
 		--json headBranch,conclusion --jq '[.[] | select(.conclusion == "success" and .headBranch == env.RC)] | length')
 	passed=$((passed + n))
@@ -23,5 +27,8 @@ git -C "$work" rm -rqf . >/dev/null
 git archive "$tag" | tar -x -C "$work"
 git -C "$work" add -A
 git -C "$work" commit -qm "Release $tag"
-git -C "$work" push -q "$prod" HEAD:main "HEAD:refs/tags/$tag"
+case $tag in
+*-*) git -C "$work" push -q "$prod" "HEAD:refs/tags/$tag" ;;
+*) git -C "$work" push -q "$prod" HEAD:main "HEAD:refs/tags/$tag" ;;
+esac
 echo "Promoted $tag to $prod"

@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,25 @@ func TestRemovePlaceEncodedAmpersand(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(f); string(b) != "<xbel>\n</xbel>\n" {
 		t.Fatalf("got %q", b)
+	}
+}
+
+func TestScanTreeReportsLinkedFolders(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o644)
+	os.WriteFile(filepath.Join(other, "b.txt"), []byte("b"), 0o644)
+	os.Symlink(other, filepath.Join(root, "linked"))
+	os.Symlink(filepath.Join(root, "a.txt"), filepath.Join(root, "file-link"))
+	os.Symlink(filepath.Join(root, "missing"), filepath.Join(root, "broken"))
+	files, _, errs, notes := scanTreeCovered(root, nil, nil)
+	if len(files) != 1 || len(errs) != 0 || len(notes) != 2 {
+		t.Fatalf("files=%v errs=%v notes=%v", files, errs, notes)
+	}
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "links to another folder") || !strings.Contains(joined, "broken link") {
+		t.Fatalf("notes %v", notes)
+	}
+	if _, _, _, notes := scanTreeCovered(root, nil, []string{other}); len(notes) != 1 {
+		t.Fatalf("link into a covered folder should not be reported: %v", notes)
 	}
 }

@@ -68,6 +68,10 @@ func openDownload(ctx context.Context, srv *drive.Service, id, revision string, 
 }
 
 func downloadFile(ctx context.Context, srv *drive.Service, id, revision, sum string, mtime int64, full string, lim *limiter) error {
+	return downloadFileTo(ctx, srv, id, revision, sum, mtime, full, lim, os.Rename)
+}
+
+func downloadFileTo(ctx context.Context, srv *drive.Service, id, revision, sum string, mtime int64, full string, lim *limiter, place func(part, full string) error) error {
 	dir := filepath.Dir(full)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -123,5 +127,5 @@ func downloadFile(ctx context.Context, srv *drive.Service, id, revision, sum str
 			return err
 		}
 	}
-	return os.Rename(part, full)
+	return place(part, full)
 }

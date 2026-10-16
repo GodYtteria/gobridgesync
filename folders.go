@@ -61,6 +61,9 @@ func (r *Remote) ensureFolder(ctx context.Context, srv *drive.Service, dir strin
 		})
 	}
 	c.err = err
+	if err == nil {
+		r.index.noteFolder(c.id, path.Base(dir), parent)
+	}
 	r.mu.Lock()
 	if err == nil {
 		r.Folders[dir] = c.id

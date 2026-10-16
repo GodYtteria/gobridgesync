@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,7 +12,14 @@ import (
 
 func conflictName(full string, now time.Time) string {
 	ext := filepath.Ext(full)
-	return strings.TrimSuffix(full, ext) + " (conflict " + now.Format("20060102-150405") + ")" + ext
+	base := strings.TrimSuffix(full, ext) + " (conflict " + now.Format("20060102-150405")
+	name := base + ")" + ext
+	for n := 2; ; n++ {
+		if _, err := os.Lstat(name); err != nil {
+			return name
+		}
+		name = fmt.Sprintf("%s %d)%s", base, n, ext)
+	}
 }
 
 type pendingCompare struct {

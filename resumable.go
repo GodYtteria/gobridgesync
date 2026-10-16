@@ -34,15 +34,17 @@ type uploadSession struct {
 }
 
 type sessionStore struct {
-	mu   sync.Mutex
-	path string
-	m    map[string]uploadSession
+	mu     sync.Mutex
+	saveMu sync.Mutex
+	path   string
+	m      map[string]uploadSession
+	write  func(path string, data []byte, perm os.FileMode) error
 }
 
 func (p Paths) sessions() string { return filepath.Join(p.StateDir, "upload-sessions.json") }
 
 func loadSessions(path string) *sessionStore {
-	s := &sessionStore{path: path, m: map[string]uploadSession{}}
+	s := &sessionStore{path: path, m: map[string]uploadSession{}, write: writeFileAtomic}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.m); err != nil {
 			s.m = map[string]uploadSession{}
@@ -78,11 +80,13 @@ func (s *sessionStore) drop(key string) {
 }
 
 func (s *sessionStore) save() {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
 	s.mu.Lock()
 	b, err := json.Marshal(s.m)
 	s.mu.Unlock()
 	if err == nil {
-		err = writeFileAtomic(s.path, b, 0o600)
+		err = s.write(s.path, b, 0o600)
 	}
 	if err != nil {
 		log.Printf("save upload sessions: %v", err)

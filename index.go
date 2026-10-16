@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +27,7 @@ type driveIndex struct {
 	RootID string                 `json:"rootId"`
 	Token  string                 `json:"token"`
 	FullAt time.Time              `json:"fullAt"`
+	WalSeq uint64                 `json:"walSeq"`
 	Files  map[string]*drive.File `json:"files"`
 
 	version  uint64
@@ -33,6 +36,65 @@ type driveIndex struct {
 	built    *Remote
 	builtVer uint64
 	idPath   map[string]string
+	wal      *os.File
+}
+
+type indexOp struct {
+	Seq uint64      `json:"seq"`
+	Put *drive.File `json:"put,omitempty"`
+	Del []string    `json:"del,omitempty"`
+}
+
+func (x *driveIndex) walPath() string { return x.path + ".log" }
+
+func (x *driveIndex) logOp(op indexOp) {
+	if x.path == "" {
+		return
+	}
+	x.WalSeq++
+	op.Seq = x.WalSeq
+	if x.wal == nil {
+		f, err := os.OpenFile(x.walPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			log.Printf("drive index log: %v", err)
+			return
+		}
+		x.wal = f
+	}
+	b, err := json.Marshal(op)
+	if err == nil {
+		_, err = x.wal.Write(append(b, '\n'))
+	}
+	if err != nil {
+		log.Printf("drive index log: %v", err)
+	}
+}
+
+func (x *driveIndex) replay() {
+	snapSeq := x.WalSeq
+	f, err := os.Open(x.walPath())
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 4<<20)
+	for sc.Scan() {
+		var op indexOp
+		if json.Unmarshal(sc.Bytes(), &op) != nil || op.Seq <= snapSeq {
+			continue
+		}
+		if op.Seq > x.WalSeq {
+			x.WalSeq = op.Seq
+		}
+		if op.Put != nil && op.Put.Id != "" {
+			x.Files[op.Put.Id] = op.Put
+		}
+		for _, id := range op.Del {
+			delete(x.Files, id)
+		}
+	}
+	x.changed()
 }
 
 const indexSaveEvery = time.Minute
@@ -77,6 +139,7 @@ func loadIndex(path string) *driveIndex {
 	if x.Files == nil {
 		x.Files = map[string]*drive.File{}
 	}
+	x.replay()
 	return x
 }
 
@@ -85,7 +148,17 @@ func (x *driveIndex) save() error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(x.path, b, 0o600)
+	if err := writeFileAtomic(x.path, b, 0o600); err != nil {
+		return err
+	}
+	if x.wal != nil {
+		x.wal.Close()
+		x.wal = nil
+	}
+	if err := os.Remove(x.walPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func tokenExpired(err error) bool {
@@ -113,6 +186,24 @@ func (x *driveIndex) note(f *drive.File, name, parent string) {
 		x.Files = map[string]*drive.File{}
 	}
 	x.put(next)
+	x.logOp(indexOp{Put: next})
+}
+
+func (x *driveIndex) noteFolder(id, name, parent string) {
+	if x == nil || id == "" || parent == "" {
+		return
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if _, ok := x.Files[id]; ok {
+		return
+	}
+	if x.Files == nil {
+		x.Files = map[string]*drive.File{}
+	}
+	x.Files[id] = &drive.File{Id: id, Name: name, Parents: []string{parent}, MimeType: folderMime}
+	x.changed()
+	x.logOp(indexOp{Put: x.Files[id]})
 }
 
 func (x *driveIndex) moved(id, name, parent string) {
@@ -129,6 +220,35 @@ func (x *driveIndex) moved(id, name, parent string) {
 	next.Name, next.Parents = name, []string{parent}
 	x.Files[id] = &next
 	x.changed()
+	x.logOp(indexOp{Put: &next})
+}
+
+func (x *driveIndex) ancestors(id string, into map[string]bool) {
+	if x == nil {
+		return
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for depth := 0; depth < 64; depth++ {
+		f, ok := x.Files[id]
+		if !ok || len(f.Parents) == 0 {
+			return
+		}
+		id = f.Parents[0]
+		into[id] = true
+	}
+}
+
+func (x *driveIndex) modTime(id string) string {
+	if x == nil {
+		return ""
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if f, ok := x.Files[id]; ok {
+		return f.ModifiedTime
+	}
+	return ""
 }
 
 func (x *driveIndex) forget(id string) {
@@ -139,6 +259,7 @@ func (x *driveIndex) forget(id string) {
 	defer x.mu.Unlock()
 	delete(x.Files, id)
 	x.changed()
+	x.logOp(indexOp{Del: []string{id}})
 }
 
 func (x *driveIndex) forgetTree(id string) {
@@ -156,10 +277,15 @@ func (x *driveIndex) forgetTree(id string) {
 			}
 		}
 	}
+	ids := make([]string, 0, len(gone))
 	for fid := range gone {
 		delete(x.Files, fid)
+		ids = append(ids, fid)
 	}
 	x.changed()
+	for chunk := range slices.Chunk(ids, 1000) {
+		x.logOp(indexOp{Del: chunk})
+	}
 }
 
 func (x *driveIndex) snapshot() (*Remote, error) {
@@ -219,11 +345,15 @@ func (x *driveIndex) full(ctx context.Context, srv *drive.Service) error {
 	if err != nil {
 		return err
 	}
+	rootID, err := rootFolderID(ctx, srv)
+	if err != nil {
+		return err
+	}
 	all, err := listAll(ctx, srv)
 	if err != nil {
 		return err
 	}
-	x.RootID = rootFolderID(ctx, srv)
+	x.RootID = rootID
 	x.Files, x.Token, x.FullAt = all, start.StartPageToken, time.Now()
 	x.changed()
 	return nil
@@ -262,6 +392,9 @@ func (x *driveIndex) apply(changes []*drive.Change) {
 				x.changed()
 			}
 		default:
+			if cur, ok := x.Files[c.FileId]; ok && cur.Version != 0 && c.File.Version != 0 && cur.Version > c.File.Version {
+				continue
+			}
 			c.File.Trashed = false
 			x.put(c.File)
 		}

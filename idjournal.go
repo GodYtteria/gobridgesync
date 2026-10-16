@@ -5,10 +5,14 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 )
+
+func (p Paths) syncIDs() string   { return filepath.Join(p.StateDir, "sync-ids") }
+func (p Paths) backupIDs() string { return filepath.Join(p.StateDir, "backup-ids") }
 
 type idJournal struct {
 	mu   sync.Mutex
@@ -58,6 +62,9 @@ func (j *idJournal) put(key, id string) error {
 		j.f = f
 	}
 	if _, err := j.f.WriteString(key + "\t" + id + "\n"); err != nil {
+		return err
+	}
+	if err := j.f.Sync(); err != nil {
 		return err
 	}
 	j.ids[key] = id

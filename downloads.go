@@ -4,16 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"google.golang.org/api/googleapi"
 )
 
+type scanView struct {
+	file    LocalFile
+	present bool
+}
+
 type pendingDownload struct {
 	path string
 	file RemoteFile
+	seen scanView
 }
 
 func notDownloadable(err error) bool {
@@ -53,7 +64,7 @@ func (s *Syncer) downloadAll(ctx context.Context, jobs []pendingDownload) []erro
 			defer wg.Done()
 			for j := range ch {
 				s.report("download " + j.path)
-				err := retryRead(ctx, func() error { return s.download(ctx, j.path, j.file) })
+				err := retryRead(ctx, func() error { return s.download(ctx, j.path, j.file, &j.seen) })
 				s.mu.Lock()
 				switch {
 				case notDownloadable(err):
@@ -85,11 +96,31 @@ func (s *Syncer) downloadAll(ctx context.Context, jobs []pendingDownload) []erro
 	return errs
 }
 
-func (s *Syncer) download(ctx context.Context, p string, r RemoteFile) error {
-	if err := downloadFile(ctx, s.srv, r.ID, "", r.MD5, r.MTime, s.abs(p), s.limiter); err != nil {
+func (s *Syncer) download(ctx context.Context, p string, r RemoteFile, seen *scanView) error {
+	place := os.Rename
+	if seen != nil {
+		place = func(part, full string) error { return placeDownload(p, part, full, *seen) }
+	}
+	if err := downloadFileTo(ctx, s.srv, r.ID, "", r.MD5, r.MTime, s.abs(p), s.limiter, place); err != nil {
 		return err
 	}
 	return s.record(p, r.ID, r.MD5)
+}
+
+func placeDownload(p, part, full string, seen scanView) error {
+	info, err := os.Lstat(full)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return err
+	case !seen.present || info.Size() != seen.file.Size || info.ModTime().UnixNano() != seen.file.MTime:
+		dst := conflictName(full, time.Now())
+		log.Printf("conflict %s: changed on this computer during the sync; local copy kept as %s", p, filepath.Base(dst))
+		if err := os.Rename(full, dst); err != nil {
+			return err
+		}
+	}
+	return os.Rename(part, full)
 }
 
 const diskReserve = 2 << 30

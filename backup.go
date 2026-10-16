@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -72,6 +73,8 @@ type Backup struct {
 	quota    func(Quota)
 
 	journal *idJournal
+	covered []string
+	notices []string
 
 	mu      sync.Mutex
 	remote  *Remote
@@ -118,6 +121,30 @@ func backupNames(folders []string) []string {
 }
 
 func scanTree(root string, ex *excluder) (map[string]LocalFile, []string, []error) {
+	files, dirs, errs, _ := scanTreeCovered(root, ex, nil)
+	return files, dirs, errs
+}
+
+func linkNotice(p string, covered []string) string {
+	info, err := os.Stat(p)
+	if err != nil {
+		return p + " is a broken link and is skipped"
+	}
+	if !info.IsDir() {
+		return ""
+	}
+	target, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		target = p
+	}
+	if slices.ContainsFunc(covered, func(c string) bool { return within(target, c) }) {
+		return ""
+	}
+	return p + " links to another folder and is not backed up; add that folder directly"
+}
+
+func scanTreeCovered(root string, ex *excluder, covered []string) (map[string]LocalFile, []string, []error, []string) {
+	var notices []string
 	out := map[string]LocalFile{}
 	var dirs []string
 	var errs []error
@@ -160,6 +187,12 @@ func scanTree(root string, ex *excluder) (map[string]LocalFile, []string, []erro
 			dirs = append(dirs, rel)
 			return nil
 		}
+		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			if n := linkNotice(p, covered); n != "" && len(notices) < maxScanErrors {
+				notices = append(notices, n)
+			}
+			return nil
+		}
 		if !d.Type().IsRegular() || strings.HasPrefix(name, tmpPrefix) || !validName(name) {
 			removeStalePart(p, d)
 			return nil
@@ -173,9 +206,9 @@ func scanTree(root string, ex *excluder) (map[string]LocalFile, []string, []erro
 		return nil
 	})
 	if err != nil {
-		return nil, nil, append(errs, err)
+		return nil, nil, append(errs, err), notices
 	}
-	return out, dirs, errs
+	return out, dirs, errs, notices
 }
 
 func emptyDirs(files map[string]LocalFile, dirs []string) []string {
@@ -290,7 +323,7 @@ func (b *Backup) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list drive: %w", err)
 	}
-	remote.journal = b.journal
+	remote.journal, remote.index = b.journal, b.index
 	b.remote = remote
 	target := backupTarget()
 	names := backupNames(b.folders)
@@ -302,7 +335,8 @@ func (b *Backup) Run(ctx context.Context) error {
 
 	sizes := map[string]FolderSize{}
 	for i, dir := range b.folders {
-		files, subdirs, scanErrs := scanTree(dir, b.exclude)
+		files, subdirs, scanErrs, notes := scanTreeCovered(dir, b.exclude, b.covered)
+		b.notices = append(b.notices, notes...)
 		errs = append(errs, scanErrs...)
 		if files == nil {
 			complete = false
@@ -518,8 +552,12 @@ func (b *Backup) upload(ctx context.Context, job uploadJob) error {
 			if errors.Is(err, errAdoptTrashed) {
 				b.journal.drop("file:" + job.rp)
 			}
+			if notFound(err) {
+				log.Printf("backup: the Drive id reserved for %s no longer exists; a new one is used next time", job.rp)
+				b.remote.releaseID("file:" + job.rp)
+			}
 			if errors.Is(err, errAdoptStale) {
-				job.r = &RemoteFile{ID: res.Id}
+				job.r = &RemoteFile{ID: res.Id, MD5: res.Md5Checksum}
 				return b.upload(ctx, job)
 			}
 		}
@@ -555,8 +593,12 @@ func (b *Backup) upload(ctx context.Context, job uploadJob) error {
 			if errors.Is(err, errAdoptTrashed) {
 				b.journal.drop("file:" + job.rp)
 			}
+			if notFound(err) {
+				log.Printf("backup: the Drive id reserved for %s no longer exists; a new one is used next time", job.rp)
+				b.remote.releaseID("file:" + job.rp)
+			}
 			if errors.Is(err, errAdoptStale) {
-				job.r = &RemoteFile{ID: res.Id}
+				job.r = &RemoteFile{ID: res.Id, MD5: res.Md5Checksum}
 				return b.upload(ctx, job)
 			}
 		}

@@ -23,6 +23,7 @@ type Syncer struct {
 	st          *State
 	remote      *Remote
 	force       bool
+	dups        dupTracker
 	notify      func(string)
 	stop        func() bool
 	progress    func(Progress)
@@ -67,6 +68,7 @@ func (s *Syncer) save() error {
 func (s *Syncer) abs(p string) string { return filepath.Join(s.paths.Root, filepath.FromSlash(p)) }
 
 func (s *Syncer) Run(ctx context.Context) error {
+	pruneTrash(s.paths.trash(), time.Now())
 	if _, err := os.Stat(s.paths.Root); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) || len(s.st.Files) > 0 {
 			return fmt.Errorf("sync folder unavailable: %w", err)
@@ -79,6 +81,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list drive: %w", err)
 	}
+	remote.journal, remote.index = s.journal, s.index
 	if prefix := syncPrefix(); prefix != "" {
 		if remote.blocked(prefix) {
 			return fmt.Errorf("more than one %q folder in My Drive; merge or rename the extras", prefix)
@@ -91,11 +94,12 @@ func (s *Syncer) Run(ctx context.Context) error {
 	} else {
 		excludeBackup(remote)
 	}
-	remote.journal = s.journal
+	remote.journal, remote.index = s.journal, s.index
 	s.remote = remote
 	if len(remote.Files) == 0 && len(s.st.Files) > 0 && !s.force {
 		return errors.New("drive listing is empty but state is not; refusing (use -force)")
 	}
+	dupErrs := s.renameDuplicates(ctx, remote)
 	for p := range s.st.Unavailable {
 		if _, ok := remote.Files[p]; !ok {
 			delete(s.st.Unavailable, p)
@@ -107,7 +111,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 		inboxErrs = s.sortInbox(ctx, remote)
 	}
 	planStart := time.Now()
-	local, err := s.cache.scan(s.paths.Root, s.exclude, s.excludeList, planStart)
+	local, unreadable, err := s.cache.scan(s.paths.Root, s.exclude, s.excludeList, planStart)
 	if err != nil {
 		return fmt.Errorf("scan local: %w", err)
 	}
@@ -125,7 +129,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 	}
 	keys := make([]string, 0, len(all))
 	for p := range all {
-		if !remote.blocked(p) && !s.exclude.skip(s.abs(p), p) {
+		if !remote.blocked(p) && !underAny(unreadable, p) && !s.exclude.skip(s.abs(p), p) {
 			keys = append(keys, p)
 		}
 	}
@@ -155,7 +159,11 @@ func (s *Syncer) Run(ctx context.Context) error {
 			deletes++
 		}
 	}
-	errs := inboxErrs
+	errs := append(inboxErrs, dupErrs...)
+	errs = append(errs, remote.invalidNameErrors()...)
+	for _, u := range unreadable {
+		errs = append(errs, fmt.Errorf("folder %q cannot be read on this computer; it is skipped until its permissions are fixed", u))
+	}
 	if massDelete(deletes, len(s.st.Files)) && !s.force && (s.allow == nil || !s.allow(deletes)) {
 		for p, a := range plan {
 			if a == DeleteLocal || a == DeleteRemote {
@@ -222,7 +230,8 @@ func (s *Syncer) Run(ctx context.Context) error {
 			s.report(a.String() + " " + p)
 		}
 		if a == Download {
-			downloads = append(downloads, pendingDownload{p, rf})
+			_, here := local[p]
+			downloads = append(downloads, pendingDownload{p, rf, scanView{lf, here}})
 			continue
 		}
 		if a == Upload {
@@ -270,7 +279,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 func (s *Syncer) apply(ctx context.Context, a Action, p string, l LocalFile, r RemoteFile) error {
 	switch a {
 	case Download:
-		return s.download(ctx, p, r)
+		return s.download(ctx, p, r, nil)
 	case Upload:
 		var target *RemoteFile
 		if r.ID != "" {
@@ -297,7 +306,7 @@ func (s *Syncer) apply(ctx context.Context, a Action, p string, l LocalFile, r R
 		if err := os.Rename(s.abs(p), dst); err != nil {
 			return err
 		}
-		return s.download(ctx, p, r)
+		return s.download(ctx, p, r, &scanView{})
 	}
 	return nil
 }
@@ -315,11 +324,15 @@ func (s *Syncer) deleteLocal(p string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	if err := os.Rename(s.abs(p), dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := moveFile(s.abs(p), dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	delete(s.st.Files, p)
 	return nil
+}
+
+func underAny(dirs []string, p string) bool {
+	return slices.ContainsFunc(dirs, func(d string) bool { return p == d || strings.HasPrefix(p, d+"/") })
 }
 
 func excludeBackup(r *Remote) {
@@ -332,6 +345,11 @@ func excludeBackup(r *Remote) {
 	for p := range r.Docs {
 		if strings.HasPrefix(p, prefix) {
 			delete(r.Docs, p)
+		}
+	}
+	for k := range r.Dupes {
+		if strings.HasPrefix(k, foldKey(prefix)) {
+			delete(r.Dupes, k)
 		}
 	}
 	r.Ambiguous[foldKey(backupRootName)] = true

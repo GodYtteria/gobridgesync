@@ -61,6 +61,13 @@
       </div>
     </div>
   </div>
+  <div id="notices" class="alert warn" role="note" hidden>
+    <svg class="icon alert-icon" aria-hidden="true"><use href="#i-alert"/></svg>
+    <div>
+      <strong>Heads up</strong>
+      <ul id="notices-list"></ul>
+    </div>
+  </div>
   <div id="alert" class="alert" role="alert" hidden>
     <svg class="icon alert-icon" aria-hidden="true"><use href="#i-alert"/></svg>
     <div>
@@ -148,6 +155,7 @@
   </section>
 
   <div class="grid">
+    <div class="col">
     <section id="overview" class="card" hidden>
       <h2><svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>Drive storage</h2>
       <div class="meter-label"><span id="quota-text">Checking…</span><span id="quota-free"></span></div>
@@ -164,9 +172,30 @@
         <div><dt>Problems</dt><dd id="stat-errors">–</dd></div>
       </dl>
     </section>
+  <section id="issues-card" class="card" hidden>
+    <div class="card-head">
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>Problems</h2>
+      <button id="clear-issues" type="button" class="secondary small-btn">Clear</button>
+    </div>
+    <ul id="issues" class="log issues"></ul>
+  </section>
+  <section id="restore-card" class="card" hidden>
+    <div class="card-head">
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-restore"/></svg>Restore</h2>
+      <button id="restore-open" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Browse backups</button>
+    </div>
+    <p class="muted small">Get files or older versions back from Google Drive. Restored files never overwrite what you have; copies are named "(restored)".</p>
+  </section>
+  <section class="card activity">
+    <h2><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Activity</h2>
+    <ul id="recent" class="log"></ul>
+  </section>
+    </div>
 
     <section id="settings" class="card" hidden>
       <h2><svg class="icon" aria-hidden="true"><use href="#i-computer"/></svg>Settings</h2>
+      <details class="group" open>
+        <summary>General</summary>
 
       <label class="switch">
         <input id="twoway" type="checkbox" role="switch">
@@ -187,6 +216,29 @@
         <span id="startup-label">Start GoBridgeSync when I sign in</span>
       </label>
 
+      <label class="switch">
+        <input id="devmode" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Developer mode (shows presets for developer folders such as node_modules)</span>
+      </label>
+
+      <label id="stream-row" class="switch" hidden>
+        <input id="stream" type="checkbox" role="switch">
+        <span class="track" aria-hidden="true"></span>
+        <span>Streaming folder: see your whole Drive in <strong id="stream-dir"></strong> without filling your disk (files download when opened; changes save back to Drive in the background) <em id="stream-state" aria-live="polite"></em></span>
+      </label>
+
+      <label id="stream-size-row" class="select" hidden>
+        <span>Streaming cache size</span>
+        <select id="stream-gb">
+          <option value="10">10 GB</option>
+          <option value="20">20 GB</option>
+          <option value="50">50 GB</option>
+          <option value="100">100 GB</option>
+          <option value="200">200 GB</option>
+        </select>
+      </label>
+
       <label id="reports-row" class="switch">
         <input id="reports" type="checkbox" role="switch">
         <span class="track" aria-hidden="true"></span>
@@ -204,19 +256,10 @@
         <button id="signout" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-login"/></svg>Sign out</button>
       </div>
 
-      <h3>Sync</h3>
-      <label class="select">
-        <span class="sr-only">How often to back up and sync</span>
-        <select id="every">
-          <option value="-2">Instantly, when files change</option>
-          <option value="1">Automatically, every minute</option>
-          <option value="5">Automatically, every 5 minutes</option>
-          <option value="15">Automatically, every 15 minutes</option>
-          <option value="60">Automatically, every hour</option>
-          <option value="-1">Manually, only when I click Sync now</option>
-        </select>
-      </label>
+      </details>
 
+      <details class="group" open>
+        <summary>Folders</summary>
       <h3>Back up these folders</h3>
       <p class="muted small">To <strong id="target"></strong>. Deleting on this computer keeps the Drive copy.</p>
       <ul id="folders" class="folders"></ul>
@@ -230,17 +273,36 @@
         <button id="browse" type="button" class="secondary" aria-label="Browse for a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
         <button type="submit" aria-label="Add folder"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
       </form>
+      </details>
 
-      <h3>Don't back up</h3>
+      <details class="group">
+        <summary>Don't back up</summary>
       <p class="muted small">Files or folders to leave out of backup and sync. Pick a folder with the search button, or type a name: <code>*.tmp</code> skips every .tmp file.</p>
       <ul id="excludes" class="folders"></ul>
-      <button id="dev-preset" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add developer folders (node_modules, .venv, build…)</button>
+      <button id="dev-preset" type="button" class="secondary small-btn" hidden><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add developer folders (node_modules, .venv, build…)</button>
       <form id="exclude-form" class="row">
         <label for="exclude-input" class="sr-only">Pattern or folder to skip</label>
         <input id="exclude-input" type="text" placeholder="*.tmp or a folder" autocomplete="off">
         <button id="exclude-browse" type="button" class="secondary" aria-label="Browse for a folder to skip"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
         <button type="submit" aria-label="Add to skip list"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
       </form>
+
+      </details>
+
+      <details class="group">
+        <summary>Sync speed and limits</summary>
+      <h3>How often</h3>
+      <label class="select">
+        <span class="sr-only">How often to back up and sync</span>
+        <select id="every">
+          <option value="-2">Instantly, when files change</option>
+          <option value="1">Automatically, every minute</option>
+          <option value="5">Automatically, every 5 minutes</option>
+          <option value="15">Automatically, every 15 minutes</option>
+          <option value="60">Automatically, every hour</option>
+          <option value="-1">Manually, only when I click Sync now</option>
+        </select>
+      </label>
 
       <h3>Speed limit</h3>
       <fieldset class="segmented" id="speed">
@@ -260,29 +322,11 @@
         <label><input type="radio" name="limit" value="75"><span>75%</span></label>
         <label><input type="radio" name="limit" value="50"><span>50%</span></label>
       </fieldset>
+    
+      </details>
     </section>
   </div>
 
-  <section id="restore-card" class="card" hidden>
-    <div class="card-head">
-      <h2><svg class="icon" aria-hidden="true"><use href="#i-restore"/></svg>Restore</h2>
-      <button id="restore-open" type="button" class="secondary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Browse backups</button>
-    </div>
-    <p class="muted small">Get files or older versions back from Google Drive. Restored files never overwrite what you have; copies are named "(restored)".</p>
-  </section>
-
-  <section id="issues-card" class="card" hidden>
-    <div class="card-head">
-      <h2><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>Problems</h2>
-      <button id="clear-issues" type="button" class="secondary small-btn">Clear</button>
-    </div>
-    <ul id="issues" class="log issues"></ul>
-  </section>
-
-  <section class="card">
-    <h2><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Activity</h2>
-    <ul id="recent" class="log"></ul>
-  </section>
 </main>
 
 <footer><span id="footer-name">GoBridgeSync</span> <span id="version"></span> · Developed by GodYtteria × Bukluran ng Kalinga</footer>

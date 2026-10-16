@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"google.golang.org/api/drive/v3"
 )
@@ -141,8 +142,58 @@ func TestIndexCachesBuiltRemote(t *testing.T) {
 	if got, _ := x.snapshot(); got.Files["P/a.txt"].MD5 != "edited" || got.Files["P/a.txt"].Size != 9 {
 		t.Fatalf("content-only change not applied: %+v", got.Files["P/a.txt"])
 	}
-	x.apply([]*drive.Change{{FileId: "a", File: file("a", "renamed.txt", "p", "edited")}})
+	renamed := file("a", "renamed.txt", "p", "edited")
+	renamed.Version = 5
+	x.Files["a"].Version = 4
+	x.apply([]*drive.Change{{FileId: "a", File: renamed}})
 	if got, _ := x.snapshot(); x.built == built || got.Files["P/renamed.txt"].ID != "a" {
 		t.Fatal("rename did not rebuild the listing")
+	}
+}
+
+func TestBuildRemoteResolvesRootAlias(t *testing.T) {
+	all := map[string]*drive.File{"f": file("f", "top.txt", "root", "m")}
+	r, err := buildRemote(all, "REALROOT")
+	if err != nil || r.Files["top.txt"].ID != "f" {
+		t.Fatalf("file noted under the root alias is invisible: %+v %v", r.Files, err)
+	}
+}
+
+func TestDuplicateRenamesKeepOurs(t *testing.T) {
+	ours := &drive.File{OwnedByMe: true, Id: "mine", Name: "c.md", Parents: []string{"p"}, ModifiedTime: "2026-01-02T00:00:00Z"}
+	other := &drive.File{OwnedByMe: true, Id: "theirs", Name: "c.md", Parents: []string{"p"}, ModifiedTime: "2026-01-01T00:00:00Z"}
+	folderA := &drive.File{OwnedByMe: true, Id: "fa", Name: "x", Parents: []string{"p"}, MimeType: folderMime}
+	folderB := &drive.File{OwnedByMe: true, Id: "fb", Name: "x", Parents: []string{"p"}, MimeType: folderMime}
+	got := duplicateRenames(map[string][]*drive.File{"c.md": {other, ours}, "x": {folderA, folderB}},
+		func(id string) bool { return id == "mine" }, time.Date(2026, 10, 16, 5, 42, 0, 0, time.UTC))
+	if len(got) != 2 || got["theirs"] != "c (conflict 20261016-054200).md" || got["fb"] != "x (conflict 20261016-054200)" {
+		t.Fatalf("renames %v", got)
+	}
+}
+
+func TestDuplicateRenamesSkipFoldCollisionsAndSharedFiles(t *testing.T) {
+	a := &drive.File{OwnedByMe: true, Id: "a", Name: "Notes.txt", Parents: []string{"p"}}
+	b := &drive.File{OwnedByMe: true, Id: "b", Name: "notes.txt", Parents: []string{"p"}}
+	if got := duplicateRenames(map[string][]*drive.File{"notes.txt": {a, b}}, func(string) bool { return true }, time.Now()); len(got) != 0 {
+		t.Fatalf("different names must stay blocked, not renamed: %v", got)
+	}
+	c := &drive.File{OwnedByMe: true, Id: "c", Name: "x.md", Parents: []string{"p"}}
+	d := &drive.File{OwnedByMe: false, Id: "d", Name: "x.md", Parents: []string{"p"}}
+	if got := duplicateRenames(map[string][]*drive.File{"x.md": {c, d}}, func(string) bool { return true }, time.Now()); len(got) != 0 {
+		t.Fatalf("a file we do not own must not be renamed: %v", got)
+	}
+}
+
+func TestApplySkipsOlderVersionNotOlderClock(t *testing.T) {
+	x := &driveIndex{Files: map[string]*drive.File{"a": {Id: "a", Name: "a.txt", Parents: []string{"p"}, Version: 7, ModifiedTime: "2099-01-01T00:00:00Z", Md5Checksum: "new"}}}
+	stale := &drive.File{Id: "a", Name: "a.txt", Parents: []string{"p"}, Version: 6, ModifiedTime: "2100-01-01T00:00:00Z", Md5Checksum: "old"}
+	x.apply([]*drive.Change{{FileId: "a", File: stale}})
+	if x.Files["a"].Md5Checksum != "new" {
+		t.Fatal("older version overwrote a newer record")
+	}
+	fresh := &drive.File{Id: "a", Name: "a.txt", Parents: []string{"p"}, Version: 8, ModifiedTime: "2001-01-01T00:00:00Z", Md5Checksum: "newer"}
+	x.apply([]*drive.Change{{FileId: "a", File: fresh}})
+	if x.Files["a"].Md5Checksum != "newer" {
+		t.Fatal("a newer version was skipped because of its clock")
 	}
 }

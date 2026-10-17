@@ -18,7 +18,11 @@ let current = null;
 async function readJSON(res) {
   const data = await res.json().catch(() => ({}));
   if (res.status === 403 && data.reload) {
-    location.reload();
+    const last = Number(sessionStorage.getItem("gbs-reloaded") || 0);
+    if (Date.now() - last > 60000) {
+      sessionStorage.setItem("gbs-reloaded", String(Date.now()));
+      location.reload();
+    }
   }
   return data;
 }

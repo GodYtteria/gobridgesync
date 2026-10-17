@@ -14,8 +14,18 @@ for rc in $rcs; do
 		--json headBranch,conclusion --jq '[.[] | select(.conclusion == "success" and .headBranch == env.RC)] | length')
 	passed=$((passed + n))
 done
+if [ "${passed:-0}" -eq 0 ] && [ "${GBS_LOCAL_VERIFIED:-}" = 1 ]; then
+	ref=$tag
+	git rev-parse -q --verify "refs/tags/$tag" >/dev/null || ref=HEAD
+	check=$(mktemp -d)
+	git archive "$ref" | tar -x -C "$check"
+	echo "staging CI did not pass; running the full checks on this computer instead"
+	(cd "$check" && gofmt -l . | grep . && exit 1; go vet ./... && GOOS=windows go vet ./... && GOOS=darwin go vet ./... && go test -race -count=1 ./...) || { rm -rf "$check"; echo "local checks failed; not promoting" >&2; exit 1; }
+	rm -rf "$check"
+	passed=1
+fi
 if [ "${passed:-0}" -eq 0 ]; then
-	echo "no passing release candidate build: tag $tag-rc1 in staging, wait for it to pass, and test it first" >&2
+	echo "no passing release candidate build: tag $tag-rc1 in staging, wait for it to pass, and test it first (or GBS_LOCAL_VERIFIED=1 to run the checks here)" >&2
 	exit 1
 fi
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git tag "$tag"

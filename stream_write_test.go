@@ -214,7 +214,7 @@ func newWEnvWrap(t *testing.T, wrap func(fake *wfake) http.Handler) *wenv {
 	srvHTTP := httptest.NewServer(h)
 	t.Cleanup(srvHTTP.Close)
 	srv, _ := drive.NewService(context.Background(), option.WithHTTPClient(srvHTTP.Client()), option.WithEndpoint(srvHTTP.URL+"/"))
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	old := streamUploadDelay
 	streamUploadDelay = 20 * time.Millisecond
 	t.Cleanup(func() { streamUploadDelay = old })
@@ -431,7 +431,7 @@ func TestStreamWriteSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	sf.f.Close()
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	again, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -556,7 +556,7 @@ func TestStreamWriteStageStillOpenAtCrashIsSavedAsRecovered(t *testing.T) {
 	sf, _ := e.w.Create("docs/draft.txt")
 	sf.WriteAt([]byte("half written"), 0)
 	sf.f.Close()
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	again, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -632,7 +632,7 @@ func TestStreamWriteReopenForTruncateThenCrashNeverEmptiesTheRealFile(t *testing
 	}
 	again.Truncate(0)
 	again.f.Close()
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	reborn, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -789,7 +789,7 @@ func TestStreamWriteReadAfterRestartDoesNotDiscardAnUnsentEdit(t *testing.T) {
 	e.w.Release(sf, true)
 	sf.f.Close()
 	streamUploadDelay = 20 * time.Millisecond
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	again, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -843,7 +843,7 @@ func TestStreamWriteUnchangedOpenStageAtCrashLeavesNoCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	sf.f.Close()
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	again, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -879,7 +879,7 @@ func TestStreamWriteOrphanDetailsFileIsRemovedOnRestart(t *testing.T) {
 	meta := sf.stage + ".json"
 	sf.f.Close()
 	os.Remove(sf.stage)
-	cache, _ := newStreamCache(t.TempDir(), 1<<30)
+	cache, _ := testCache(t, 1<<30)
 	if _, err := newStreamWriter(e.w.srv, e.dir, cache, e.snap, e.index, nil, nil); err != nil {
 		t.Fatal(err)
 	}

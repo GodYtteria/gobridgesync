@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+func testCache(t interface {
+	TempDir() string
+	Cleanup(func())
+}, limit int64) (*streamCache, error) {
+	c, err := newStreamCache(t.TempDir(), limit)
+	if c != nil {
+		t.Cleanup(func() {
+			c.Close()
+			c.waitIdle()
+		})
+	}
+	return c, err
+}
+
 func bytesFetcher(f func(ctx context.Context, off, n int64) ([]byte, error)) rangeFetcher {
 	return func(ctx context.Context, off, n int64) (io.ReadCloser, error) {
 		b, err := f(ctx, off, n)

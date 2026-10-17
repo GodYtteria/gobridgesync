@@ -15,8 +15,6 @@ jobs:
         include:
           - runner: ubuntu-latest
             targets: linux/amd64 linux/arm64 windows/amd64 windows/arm64
-          - runner: macos-latest
-            targets: darwin/amd64 darwin/arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

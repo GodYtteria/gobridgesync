@@ -27,7 +27,7 @@ func fakeFile(size int64) ([]byte, rangeFetcher, *atomic.Int64) {
 func TestStreamCacheReadsAcrossChunksAndCaches(t *testing.T) {
 	size := int64(streamChunk*2 + 1000)
 	data, fetch, calls := fakeFile(size)
-	c, err := newStreamCache(t.TempDir(), 1<<30)
+	c, err := testCache(t, 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestStreamCacheReadsAcrossChunksAndCaches(t *testing.T) {
 func TestStreamCacheEvictsLeastRecentlyUsedAndKeepsPinned(t *testing.T) {
 	size := int64(streamChunk)
 	_, fetch, _ := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 2*streamChunk)
+	c, _ := testCache(t, 2*streamChunk)
 	c.setPinned("pinned", "m", true)
 	buf := make([]byte, 10)
 	for _, id := range []string{"pinned", "a", "b", "c"} {
@@ -110,7 +110,7 @@ func TestStreamCacheSharesOneFetchAndSurvivesRestart(t *testing.T) {
 }
 
 func TestStreamCacheOfflineReturnsErrorNotPartialData(t *testing.T) {
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	fail := bytesFetcher(func(ctx context.Context, off, n int64) ([]byte, error) { return nil, errStreamOffline })
 	buf := make([]byte, 100)
 	n, err := c.ReadAt(context.Background(), "f", "m", streamChunk, buf, 0, fail)
@@ -140,7 +140,7 @@ func TestStreamCacheLoaderCancelDoesNotFailOtherReaders(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	})
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	first, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 2)
 	go func() {
@@ -183,7 +183,7 @@ func TestStreamCacheRebuildRemovesLeftoverTempFiles(t *testing.T) {
 func TestStreamCacheReadsOnlyWhatIsAsked(t *testing.T) {
 	size := int64(streamChunk)
 	data, fetch, _ := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	buf := make([]byte, 128<<10)
 	for off := int64(0); off < 1<<20; off += int64(len(buf)) {
 		n, err := c.ReadAt(context.Background(), "f", "m", size, buf, off, fetch)
@@ -196,7 +196,7 @@ func TestStreamCacheReadsOnlyWhatIsAsked(t *testing.T) {
 func TestStreamCacheReadsAheadWhenSequentialAndHydrates(t *testing.T) {
 	size := int64(streamChunk*6 + 10)
 	_, fetch, calls := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	buf := make([]byte, 100)
 	c.ReadAt(context.Background(), "f", "m", size, buf, 0, fetch)
 	c.ReadAt(context.Background(), "f", "m", size, buf, streamChunk, fetch)
@@ -210,7 +210,7 @@ func TestStreamCacheReadsAheadWhenSequentialAndHydrates(t *testing.T) {
 	}
 	big := int64(streamChunk * 12)
 	_, f2, calls2 := fakeFile(big)
-	c2, _ := newStreamCache(t.TempDir(), 1<<30)
+	c2, _ := testCache(t, 1<<30)
 	c2.ReadAt(context.Background(), "g", "m", big, buf, 0, f2)
 	c2.waitIdle()
 	base := calls2.Load()
@@ -233,7 +233,7 @@ func TestStreamCacheReadsAheadWhenSequentialAndHydrates(t *testing.T) {
 func TestStreamCachePinnedStaleRevisionIsEvictable(t *testing.T) {
 	size := int64(streamChunk)
 	_, fetch, _ := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 2*streamChunk)
+	c, _ := testCache(t, 2*streamChunk)
 	c.setPinned("p", "new", true)
 	buf := make([]byte, 10)
 	for _, id := range [][2]string{{"p", "old"}, {"p", "new"}, {"x", "m"}, {"y", "m"}} {
@@ -260,7 +260,7 @@ func TestStreamCacheFailedPrefetchPausesReadAhead(t *testing.T) {
 		}
 		return append([]byte(nil), data[off:off+n]...), nil
 	})
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	buf := make([]byte, 10)
 	c.ReadAt(context.Background(), "f", "m", size, buf, 0, fetch)
 	c.ReadAt(context.Background(), "f", "m", size, buf, 10, fetch)
@@ -327,7 +327,7 @@ func TestStreamRAMBudgetFollowsFreeMemory(t *testing.T) {
 }
 
 func TestStreamRAMDropsIdleChunks(t *testing.T) {
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	c.ramPut(chunkKey{"a", "m", 0}, []byte{1})
 	c.ramPut(chunkKey{"b", "m", 0}, []byte{1})
 	c.mu.Lock()
@@ -358,7 +358,7 @@ func TestStreamCacheBoundsConcurrentLoaders(t *testing.T) {
 		cur.Add(-1)
 		return make([]byte, n), nil
 	})
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	var wg sync.WaitGroup
 	for i := 0; i < 40; i++ {
 		wg.Add(1)
@@ -376,7 +376,7 @@ func TestStreamCacheBoundsConcurrentLoaders(t *testing.T) {
 }
 
 func TestStreamRAMTrimReleasesEverythingIdle(t *testing.T) {
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	for i := 0; i < 3; i++ {
 		c.ramPut(chunkKey{"a", "m", int64(i)}, []byte{1})
 	}
@@ -395,7 +395,7 @@ func TestStreamRAMTrimReleasesEverythingIdle(t *testing.T) {
 func TestStreamQueuedLoaderHoldsNoBuffer(t *testing.T) {
 	size := int64(streamChunk * 4)
 	_, fetch, _ := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	for i := 0; i < streamLoaders; i++ {
 		c.loads <- struct{}{}
 	}
@@ -432,7 +432,7 @@ func hasChunk(c *streamCache, id string) bool {
 func TestStreamCacheDiskHitsRefreshRecency(t *testing.T) {
 	size := int64(streamChunk)
 	_, fetch, _ := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 2*streamChunk)
+	c, _ := testCache(t, 2*streamChunk)
 	buf := make([]byte, 10)
 	for _, id := range []string{"a", "b"} {
 		if _, err := c.ReadAt(context.Background(), id, "m", size, buf, 0, fetch); err != nil {
@@ -458,7 +458,7 @@ func TestStreamCacheDiskHitsRefreshRecency(t *testing.T) {
 func TestStreamCacheMemoryHitsRefreshDiskRecency(t *testing.T) {
 	size := int64(streamChunk)
 	_, fetch, _ := fakeFile(size)
-	c, _ := newStreamCache(t.TempDir(), 2*streamChunk)
+	c, _ := testCache(t, 2*streamChunk)
 	buf := make([]byte, 10)
 	for _, id := range []string{"a", "b"} {
 		c.ReadAt(context.Background(), id, "m", size, buf, 0, fetch)
@@ -479,6 +479,7 @@ func TestStreamCacheEvictionKeepsFolderAndRestartSweepsEmptyOnes(t *testing.T) {
 	c, _ := newStreamCache(dir, streamChunk)
 	buf := make([]byte, 10)
 	c.ReadAt(context.Background(), "a", "m", size, buf, 0, fetch)
+	c.waitIdle()
 	c.ReadAt(context.Background(), "b", "m", size, buf, 0, fetch)
 	c.waitIdle()
 	if hasChunk(c, "a") {
@@ -542,7 +543,7 @@ func TestStreamCacheSlowButSteadyDownloadCompletes(t *testing.T) {
 	fetch := func(ctx context.Context, off, n int64) (io.ReadCloser, error) {
 		return &slowBody{ctx: ctx, data: data[off : off+n], step: 64 << 10, gap: 100 * time.Millisecond}, nil
 	}
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	buf := make([]byte, size)
 	start := time.Now()
 	n, err := c.ReadAt(context.Background(), "f", "m", size, buf, 0, fetch)
@@ -565,7 +566,7 @@ func TestStreamCacheStalledDownloadFailsAfterStallTimeout(t *testing.T) {
 	fetch := func(ctx context.Context, off, n int64) (io.ReadCloser, error) {
 		return &slowBody{ctx: ctx, data: data[off : off+n], step: 64 << 10, gap: time.Millisecond, hang: true}, nil
 	}
-	c, _ := newStreamCache(t.TempDir(), 1<<30)
+	c, _ := testCache(t, 1<<30)
 	start := time.Now()
 	_, err := c.ReadAt(context.Background(), "f", "m", size, make([]byte, size), 0, fetch)
 	if !errors.Is(err, errStreamStalled) {
@@ -613,7 +614,7 @@ func TestStreamCacheCloseStopsLoadersAndReleasesMemory(t *testing.T) {
 		t.Fatalf("a closed cache must not write chunks: %v", entries)
 	}
 
-	c2, _ := newStreamCache(t.TempDir(), 1<<30)
+	c2, _ := testCache(t, 1<<30)
 	c2.ramPut(chunkKey{"a", "m", 0}, []byte{1})
 	c2.Close()
 	c2.ramPut(chunkKey{"a", "m", 1}, []byte{1})
@@ -642,7 +643,7 @@ func TestStreamCacheEvictsWhenOpenedOverLimitAndWhenPinsChange(t *testing.T) {
 	if c.Used() > 10 || !hasChunk(c, "b") {
 		t.Fatalf("a lowered limit must be enforced once pins are set, keeping pinned b: used=%d b=%v", c.Used(), hasChunk(c, "b"))
 	}
-	c2, _ := newStreamCache(t.TempDir(), 100)
+	c2, _ := testCache(t, 100)
 	for _, id := range []string{"a", "b", "c"} {
 		c2.items[chunkKey{id, "m", 0}] = c2.lru.PushFront(&cacheItem{key: chunkKey{id, "m", 0}, size: 10})
 		c2.used += 10

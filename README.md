@@ -6,188 +6,166 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-65a30d" alt="Apache-2.0">
 </p>
 
-| | |
-|---|---|
-| <img src="docs/icons/backup.svg" alt="" width="28"> | **Backup** your folders to Google Drive. Deleting a file on your computer keeps the Drive copy. |
-| <img src="docs/icons/sync.svg" alt="" width="28"> | **Sync** `~/GoBridgeSync` across every computer signed in with the same Google account. |
-| <img src="docs/icons/backup.svg" alt="" width="28"> | **Restore** folders, files, or older versions from Drive. Restores never overwrite your files. |
-| <img src="docs/icons/sync.svg" alt="" width="28"> | **Inbox** sorts whatever you drop into it: photos, videos, documents, AI models, installers, and more, each into its own folder. |
-| <img src="docs/icons/sync.svg" alt="" width="28"> | **Streaming folder** (Linux): your whole Drive as a folder, downloaded only when a file is opened. Edit, rename, and delete right there. |
-| <img src="docs/icons/alert.svg" alt="" width="28"> | **Alerts** when a backup fails or Drive is almost full. |
-| <img src="docs/icons/lock.svg" alt="" width="28"> | **Private.** Only touches files it created. Your sign-in stays in your system keyring. |
-| <img src="docs/icons/free.svg" alt="" width="28"> | **Free and open source.** |
+GoBridgeSync keeps your files safe in Google Drive and the same on all your computers. Free and open source.
 
-<p align="center"><img src="docs/screenshot-dark.png" alt="GoBridgeSync web interface" width="720"></p>
+- **Backup:** your folders are copied to Google Drive. Deleting a file on your computer keeps the Drive copy.
+- **Sync:** the `GoBridgeSync` folder is the same on every computer signed in with your Google account.
+- **Restore:** get back folders, files, or older versions from Drive. A restore never overwrites your files.
+- **Inbox:** drop files in, and they are sorted into Pictures, Videos, Documents, and more.
+- **Streaming folder** (Linux): your whole Drive as a folder, without filling your disk.
+
+<p align="center"><img src="docs/screenshot-dark.png" alt="GoBridgeSync window" width="720"></p>
 
 ## Install
 
-### Windows
+**Windows:** press **Start**, type **PowerShell**, open it, paste this line (right-click pastes), and press **Enter**:
 
-1. Press **Start**, type **PowerShell**, and open it.
-2. Paste this line (right-click pastes) and press **Enter**:
+```powershell
+irm https://raw.githubusercontent.com/GodYtteria/gobridgesync-desktop/main/install.ps1 | iex
+```
 
-   ```powershell
-   irm https://raw.githubusercontent.com/GodYtteria/gobridgesync-desktop/main/install.ps1 | iex
-   ```
+**macOS and Linux:** open **Terminal** (macOS: **Cmd + Space**, type Terminal; Linux: **Ctrl + Alt + T**), paste this line, and press **Enter**:
 
-3. Your browser opens GoBridgeSync. Click **Sign in with Google**.
+```sh
+curl -fsSL https://raw.githubusercontent.com/GodYtteria/gobridgesync-desktop/main/install.sh | sh
+```
 
-### macOS and Linux
+GoBridgeSync opens in your browser. The first time, it walks you through connecting Google Drive (about 5 minutes, see below). After that it starts with your computer and updates itself. Open it any time from the tray icon or <http://127.0.0.1:47811/>.
 
-1. Open **Terminal** (macOS: **Cmd + Space**, type Terminal; Linux: **Ctrl + Alt + T**).
-2. Paste this line and press **Enter**:
+<details>
+<summary><b>Connect Google Drive (first time only)</b></summary>
 
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/GodYtteria/gobridgesync-desktop/main/install.sh | sh
-   ```
+You use your own free Google key, so your files never pass through anyone else. The app shows the same steps.
 
-3. Your browser opens GoBridgeSync. Click **Sign in with Google**.
+1. **[Create a project](https://console.cloud.google.com/projectcreate)** named `GoBridgeSync`. Keep the defaults and skip any billing offer. Seeing "Google Cloud access blocked"? Turn on [2-Step Verification](https://myaccount.google.com/signinoptions/two-step-verification), then sign in again.
+2. **[Turn on the Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)**.
+3. **[Set up the consent screen](https://console.cloud.google.com/auth/overview)**: name `GoBridgeSync`, audience **External**. Add your own Google account under **[Audience → Test users](https://console.cloud.google.com/auth/audience)**. Leave it in **Testing**.
+4. **[Create an OAuth client](https://console.cloud.google.com/auth/clients/create)**: type **Desktop app**, then **Download JSON**.
+5. In GoBridgeSync, choose that JSON file and click **Sign in with Google**. When Google says "Google hasn't verified this app", choose **Continue** (it is your own app).
 
-**Test versions:** to try the newest pre-release before everyone else, add `GBS_CHANNEL=staging` (macOS and Linux: `... | GBS_CHANNEL=staging sh`; Windows: run `$env:GBS_CHANNEL='staging'` first). A test version keeps updating to the newest pre-release or stable release.
-
-GoBridgeSync starts with your computer and updates itself. Your files are in the **GoBridgeSync** folder in your home folder. To open it again, click the tray icon or go to <http://127.0.0.1:47811/>.
-
-## Settings
-
-Change these from the tray menu or the web interface.
-
-| Setting | Default | Choices |
-|---|---|---|
-| Start at login | On | On, Off |
-| Sync | Every 5 minutes | Instantly when files change, every 1, 5, 15, or 60 minutes, or Manual only |
-| Don't back up | None | Folders you pick, or names like `*.tmp` or `node_modules` |
-| Speed limit | Unlimited | 10 MB/s, 5 MB/s, 1 MB/s, 512 KB/s |
-| Storage limit | 90% | All, 90%, 75%, 50% of your Drive storage |
-| Sync across computers | On | On, Off |
-| Install updates automatically | On | On, Off |
-| Developer mode | Off | On, Off (shows the **Add developer folders** preset) |
-
-**Data use:** without internet, GoBridgeSync uses almost no data and tries again later. Each check reads the list of your backed-up files, so if you have many files or a limited data plan, choose a longer interval or **Manual only**.
-
-## Connect Google Drive
-
-Use your own free Google OAuth client. One time, about 5 minutes. The app shows the same guide.
-
-1. **[Create a project](https://console.cloud.google.com/projectcreate)** named `GoBridgeSync`. Keep the defaults and skip any billing offer.
-   Seeing "Google Cloud access blocked"? Turn on [2-Step Verification](https://myaccount.google.com/signinoptions/two-step-verification), sign out, and sign in again.
-2. **[Enable the Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)**.
-3. **[Set up the consent screen](https://console.cloud.google.com/auth/overview)**: app name `GoBridgeSync`, audience **External**. Then add your Google account under **[Audience → Test users](https://console.cloud.google.com/auth/audience)**. Keep it in **Testing**.
-4. **[Create an OAuth client](https://console.cloud.google.com/auth/clients/create)**: type **Desktop app**, leave "AI-powered agent" off, and **Download JSON**.
-5. In GoBridgeSync, choose the JSON and click **Sign in with Google**. At "Google hasn't verified this app", choose **Continue**.
+</details>
 
 ## Inbox
 
-Drop anything into **Inbox** and GoBridgeSync puts it in the right folder for you. Your other folders are never touched.
+Drop anything into the **Inbox** folder. About 10 seconds later it is moved into the right folder, and Inbox is empty again.
 
 <p align="center"><img src="docs/inbox-example.svg" alt="Files dropped into Inbox are moved into Pictures, Videos, Documents, Models, Installers, Music, Folders, and Other" width="720"></p>
 
-**How to use it**
+1. Open Inbox: `GoBridgeSync\Inbox` in your user folder (Windows), `~/GoBridgeSync/Inbox` (macOS, Linux), or **GoBridgeSync → Inbox** on [drive.google.com](https://drive.google.com) from your phone.
+2. Drag files or whole folders in.
+3. Wait a few seconds. Each move shows in the app's **Activity** list.
 
-1. Make sure **Sync across computers** is on (Settings). Inbox only works with sync.
-2. Open the Inbox folder:
-   - Windows: `C:\Users\<you>\GoBridgeSync\Inbox` (File Explorer)
-   - macOS and Linux: `~/GoBridgeSync/Inbox` (Finder or Files)
-   - Phone or another computer: open [drive.google.com](https://drive.google.com), go to **GoBridgeSync → Inbox**, and upload there.
-3. Drag files or whole folders into it. You can drop many at once.
-4. Wait about 10 seconds after the copy finishes. The files move into their folders (table below) and Inbox is empty again. The Activity list in the app shows each move.
+Inbox needs **Sync across computers** turned on (it is on by default). Nothing is ever overwritten: a second `photo.jpg` becomes `photo (2).jpg`.
 
-**Where files go**
+<details>
+<summary><b>Where each file goes</b></summary>
 
 | Folder | Files |
 |---|---|
-| Pictures/`YYYY-MM`, Videos/`YYYY-MM` | photos and videos, by month |
+| Pictures/`YYYY-MM`, Videos/`YYYY-MM` | photos and videos, by the month the file was last changed |
 | Music, Documents, Ebooks | audio; PDF, Office, text, Google Docs; e-books |
 | Archives, Installers | zip, tar, 7z; exe, msi, dmg, rpm, deb, AppImage, iso |
 | Models, Code, Design, 3D, Fonts | AI models; single source files; psd, fig, blend; stl, obj; ttf, otf |
 | Folders | folders dropped into Inbox, moved whole |
 | Other/`EXT` | anything else, one folder per file type |
 
-Photos and videos go into a folder for the month the file was last modified (`2026-10`). Files still downloading or changed in the last 10 seconds wait. If a file with the same name is already there, the new one becomes `name (2).ext`; nothing is overwritten. Files already in Drive are moved on Drive, not uploaded again.
+</details>
 
 ## Streaming folder (Linux)
 
-Your whole Google Drive appears as a folder, `~/GoogleDrive-Stream`, without using disk space for it. A file is downloaded only when you open it, and only the parts you read. Recently used parts stay in a cache on disk.
+Your whole Google Drive as the folder `~/GoogleDrive-Stream`. Files download only when you open them, so it hardly uses disk space. Edit, rename, and delete there like any folder; changes go back to Drive on their own.
 
-**Turn it on**
+1. Install FUSE once: Fedora `sudo dnf install fuse3`, Ubuntu `sudo apt install fuse3`.
+2. In GoBridgeSync **Settings**, turn on **Streaming folder**.
+3. Open `~/GoogleDrive-Stream`.
 
-1. Install FUSE once: Fedora `sudo dnf install fuse3`, Ubuntu/Debian `sudo apt install fuse3`.
-2. In GoBridgeSync **Settings**, switch on **Streaming folder** and pick a **Streaming cache size** (how much disk the downloaded parts may use).
-3. Open `~/GoogleDrive-Stream` in Files or a terminal.
+<details>
+<summary><b>Keep files on this computer, tips</b></summary>
 
-**What you can do in it**
-
-- Open, play, and seek in large files (videos, AI models) without downloading them first.
-- Edit, save, rename, move, and delete files and folders. Changes upload a few seconds after you close the file. Deletes go to the Google Drive trash.
-- Use normal tools: `git`, `rsync`, `cp -p`, editors, SQLite. File times are kept.
-
-**Keep files on this computer** (pins): pinned files are downloaded fully and never removed from the cache, so they open instantly and work offline.
+Pinned files are downloaded fully and kept, so they open instantly and work offline:
 
 ```sh
-gobridgesync stream-pin Models/llama-3-8b.Q4.gguf    # a file
-gobridgesync stream-pin Videos/2026-10               # a whole folder
-gobridgesync stream-pins                             # list pins
+gobridgesync stream-pin Videos/2026-10      # a folder or a file
+gobridgesync stream-pins                    # list
 gobridgesync stream-unpin Videos/2026-10
 ```
 
-**Tips**
+- Video editing: pin the project's videos before you start; unpin them after.
+- Coding: pin the project you are working on. `git`, `rsync`, editors, and SQLite work in the folder.
+- A part of a file that is not downloaded yet takes about a second to open, then reads as fast as your internet.
+- Deleting more than 5,000 files within 10 minutes there is refused. Deleted files go to the Google Drive trash.
+- Windows and macOS: coming later. Use the sync folder there.
 
-- Video editing: pin the project's media before you start, so the timeline plays smoothly; unpin it when you are done.
-- Coding: pin the project folder you are working on, or keep active projects in the sync folder. The first open of each file that is not cached takes about a second.
-- Speed follows your internet: about 1 second to start reading a part that is not cached, then as fast as your connection allows.
-- Safety: deleting more than 5,000 files within 10 minutes through the streaming folder is refused (restore mistakes from the Google Drive trash).
-- Windows and macOS: not available yet. Use the sync folder there.
+</details>
 
-## Coding in the sync folder
+## More
 
-Turn on **Developer mode**, then use **Don't back up → Add developer folders** to skip `node_modules`, `.venv`, `build`, `dist`, `target`, and similar folders that `npm install` or a build recreates. `.env` and `.git` stay included. Work on a project from one computer at a time, and don't share project folders that contain `.env`.
+<details>
+<summary><b>Settings</b></summary>
 
-## What syncs
+Change these from the tray menu or the app.
+
+| Setting | Default | Choices |
+|---|---|---|
+| Start at login | On | On, Off |
+| Sync | Every 5 minutes | When files change, every 1, 5, 15, or 60 minutes, or Manual only |
+| Don't back up | None | Folders you pick, or names like `*.tmp` or `node_modules` |
+| Speed limit | Unlimited | 10 MB/s, 5 MB/s, 1 MB/s, 512 KB/s |
+| Storage limit | 90% | All, 90%, 75%, 50% of your Drive |
+| Sync across computers | On | On, Off |
+| Install updates automatically | On | On, Off |
+| Developer mode | Off | On, Off (adds the **Add developer folders** preset) |
+| Streaming folder (Linux) | Off | On, Off, and a cache size |
+
+On a small data plan, pick a longer sync interval or **Manual only**.
+
+</details>
+
+<details>
+<summary><b>What syncs</b></summary>
 
 | Item | Synced |
 |---|---|
 | Files and folders in My Drive | Yes, both ways |
 | Google Docs, Sheets, Slides | As link files (`.gdoc`, `.gsheet`) that open in the browser |
-| Shared with me | No |
-| Shortcuts | No |
-| Shared drives | No |
-| Trash | No |
-| Files Google blocks from download | Skipped, with a warning |
+| Shared with me, shortcuts, shared drives, trash | No |
+| Names your computer cannot use (for example `:` on Windows) | Yes, with `_` in their place on your computer; the Drive name stays |
 
-## Good to know
+</details>
 
-- Google allows 750 GB of uploads per user per day. Rate limits are retried automatically.
-- If one pass would delete more than 5,000 files (or over half of your files), GoBridgeSync stops the deletes and asks you to **Allow** them. Everything else keeps syncing.
-- Before it overwrites or deletes a Drive file, GoBridgeSync checks that the file has not changed on Drive since its last look.
-- Two files with the same name in one Drive folder (for example from two computers) are kept: the extra one is renamed `name (conflict …)`.
-- A folder link that points outside your backed-up folders shows a **Heads up** notice instead of being skipped silently.
-- Removed files go to `~/.local/share/gobridgesync/trash/`, not straight to deletion. They stay there for 30 days.
-- Google keeps older versions of a file for 30 days; restore them from **Restore → Versions**.
-- Files in **Don't back up** are never deleted from Drive or other computers.
-- Logs are in `~/.local/share/gobridgesync/gobridgesync.log` (tray → **Open log file**).
-- Quitting from the tray asks for confirmation, so backups don't stop by accident.
-- Updates are checked daily. Each release is signed, and GoBridgeSync refuses any update whose signature doesn't match the key built into the app.
+<details>
+<summary><b>Safety and good to know</b></summary>
 
-## Uninstall
+- If one pass would delete more than 5,000 files (or over half of them), GoBridgeSync stops and asks you to **Allow** it.
+- Before changing or deleting a Drive file, it checks the file did not change on Drive in the meantime. If both sides changed, both are kept (`name (conflict …)`).
+- Files removed on your computer by a sync are kept in GoBridgeSync's trash for 30 days. Google keeps older versions for 30 days (**Restore → Versions**).
+- Coding: with **Developer mode** on, **Don't back up → Add developer folders** skips `node_modules`, `.venv`, `build`, `dist`, `target`. Work on a project from one computer at a time.
+- Updates are signed; an update with a wrong signature is refused.
+- Logs: tray → **Open log file**.
+- Test versions: add `GBS_CHANNEL=staging` to the install line (`... | GBS_CHANNEL=staging sh`, or `$env:GBS_CHANNEL='staging'` first on Windows) to get pre-releases.
 
-Quit GoBridgeSync from the tray, then run:
+</details>
 
-```sh
-gobridgesync uninstall          # keep sign-in and settings
-gobridgesync uninstall -purge   # also remove sign-in and settings
-```
+<details>
+<summary><b>Uninstall</b></summary>
 
-On Windows run `%LOCALAPPDATA%\GoBridgeSync\gobridgesync.exe uninstall`. Your files and your Google Drive are never touched.
+Quit GoBridgeSync from the tray, then run `gobridgesync uninstall` (add `-purge` to also remove sign-in and settings). On Windows: `%LOCALAPPDATA%\GoBridgeSync\gobridgesync.exe uninstall`. Your files and your Google Drive are not touched.
 
-## Build from source
+</details>
+
+<details>
+<summary><b>Build from source</b></summary>
 
 ```sh
 git clone https://github.com/GodYtteria/gobridgesync-desktop.git
-cd gobridgesync
+cd gobridgesync-desktop
 go test ./...
 ./contrib/install-linux.sh
 ```
 
-`./build.sh` builds release packages for every platform into `dist/`. Organizations with Google Workspace can build the internal edition, which syncs the whole Drive: `go build -ldflags "-X main.edition=internal"`.
+`./build.sh` builds packages for every platform into `dist/`. Speed and test numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+</details>
 
 ## License
 
